@@ -41,6 +41,8 @@ def _result_to_dict(r: SymbolResult) -> dict:
         "is_signature_only": r.is_signature_only,
         "token_estimate": r.token_estimate,
         "score": r.score,
+        "call_count": r.call_count,
+        "call_sites": r.call_sites,
     }
 
 

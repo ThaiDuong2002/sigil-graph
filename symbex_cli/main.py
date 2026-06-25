@@ -101,7 +101,15 @@ def callers_cmd(ctx, name, depth):
     results = get_callers(conn, name, depth)
     click.echo(f"Callers of '{name}' ({len(results)}):")
     for r in results:
-        click.echo(f"  {r.file_path}:{r.start_line}  {r.name}  ({r.kind})")
+        sites_str = (
+            "  called at lines: " + ", ".join(str(s) for s in r.call_sites[:8])
+            if r.call_sites else ""
+        )
+        click.echo(
+            f"  {r.file_path}:{r.start_line}  {r.name}  ({r.kind}, {r.call_count}x)"
+        )
+        if sites_str:
+            click.echo(f"  {sites_str}")
         click.echo(f"  {r.text}")
         click.echo()
 
@@ -117,7 +125,15 @@ def callees_cmd(ctx, name, depth):
     results = get_callees(conn, name, depth)
     click.echo(f"Callees of '{name}' ({len(results)}):")
     for r in results:
-        click.echo(f"  {r.file_path}:{r.start_line}  {r.name}  ({r.kind})")
+        sites_str = (
+            "  called at lines: " + ", ".join(str(s) for s in r.call_sites[:8])
+            if r.call_sites else ""
+        )
+        click.echo(
+            f"  {r.file_path}:{r.start_line}  {r.name}  ({r.kind}, {r.call_count}x)"
+        )
+        if sites_str:
+            click.echo(f"  {sites_str}")
         click.echo(f"  {r.text}")
         click.echo()
 
@@ -131,13 +147,13 @@ def impact_cmd(ctx, name):
     conn = _open_db(root)
     impact = get_impact(conn, name)
     click.echo(f"'{name}' affects {impact['count']} callers:")
-    for caller_name in impact["callers"]:
-        row = conn.execute(
-            "SELECT file_path, start_line FROM symbols WHERE name = ? LIMIT 1",
-            (caller_name,),
-        ).fetchone()
-        loc = f"{row[0]}:{row[1]}" if row else "?"
-        click.echo(f"  {loc}  {caller_name}")
+    for c in impact["callers"]:
+        loc = f"{c['file_path']}:{c['start_line']}"
+        sites_str = (
+            "  lines: " + ", ".join(str(s) for s in c["call_sites"][:8])
+            if c["call_sites"] else ""
+        )
+        click.echo(f"  {loc}  {c['name']}  ({c['call_count']}x){sites_str}")
 
 
 @cli.command("preview")

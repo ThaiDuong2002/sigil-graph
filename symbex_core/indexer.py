@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -319,7 +320,7 @@ def index_project(root: Path, conn: sqlite3.Connection) -> dict:
         # Drop all existing edges and re-resolve from scratch
         conn.execute("DELETE FROM edges")
         edges = resolve_edges(full_symbols, root)
-        for caller_name, callee_name in edges:
+        for caller_name, callee_name, call_count, call_sites in edges:
             caller_row = conn.execute(
                 "SELECT id FROM symbols WHERE name=?", (caller_name,)
             ).fetchone()
@@ -328,8 +329,9 @@ def index_project(root: Path, conn: sqlite3.Connection) -> dict:
             ).fetchone()
             if caller_row and callee_row:
                 conn.execute(
-                    "INSERT OR IGNORE INTO edges(caller_id, callee_id) VALUES(?,?)",
-                    (caller_row[0], callee_row[0]),
+                    "INSERT OR IGNORE INTO edges(caller_id, callee_id, call_count, call_sites) "
+                    "VALUES(?,?,?,?)",
+                    (caller_row[0], callee_row[0], call_count, json.dumps(call_sites)),
                 )
 
         # Rebuild FTS5 index

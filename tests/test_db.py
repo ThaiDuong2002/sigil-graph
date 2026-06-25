@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 import pytest
-from symbex_core.db import get_db, init_schema, get_index_version, bump_index_version
+from symbex_core.db import get_db, init_schema, migrate_schema, get_index_version, bump_index_version
 
 def test_init_schema_creates_tables(tmp_path):
     conn = get_db(tmp_path)
@@ -26,6 +26,31 @@ def test_bump_index_version_increments(tmp_path):
     v2 = bump_index_version(conn)
     assert v1 == 1
     assert v2 == 2
+
+def test_migrate_schema_adds_columns_to_old_db(tmp_path):
+    # Simulate a pre-migration database missing call_count / call_sites
+    conn = get_db(tmp_path)
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS edges (
+            caller_id INTEGER NOT NULL,
+            callee_id INTEGER NOT NULL,
+            PRIMARY KEY (caller_id, callee_id)
+        );
+    """)
+    conn.commit()
+    migrate_schema(conn)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
+    assert 'call_count' in cols
+    assert 'call_sites' in cols
+
+
+def test_migrate_schema_idempotent(tmp_path):
+    conn = get_db(tmp_path)
+    init_schema(conn)
+    migrate_schema(conn)  # second call should not raise
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
+    assert 'call_count' in cols
+
 
 def test_get_db_creates_directory(tmp_path):
     root = tmp_path / "project"

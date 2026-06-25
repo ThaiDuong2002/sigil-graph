@@ -1,5 +1,5 @@
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -14,6 +14,8 @@ class SymbolResult:
     is_signature_only: bool
     token_estimate: int
     score: float
+    call_count: int = 0
+    call_sites: list = field(default_factory=list)
 
 
 def _estimate_tokens(text: str) -> int:
@@ -98,7 +100,23 @@ def locate(
         if cached is not None:
             return cached
 
-    candidates = search_bm25(conn, task, limit=5)
+    candidates = search_bm25(conn, task, limit=20)
+
+    # Boost symbols that are called more often — higher call_count breaks BM25 ties
+    if candidates:
+        ids = [s.symbol_id for s in candidates]
+        placeholders = ','.join('?' * len(ids))
+        freq_rows = conn.execute(
+            f"SELECT callee_id, SUM(call_count) FROM edges "
+            f"WHERE callee_id IN ({placeholders}) GROUP BY callee_id",
+            ids,
+        ).fetchall()
+        freq = {row[0]: row[1] for row in freq_rows}
+        for s in candidates:
+            s.score -= freq.get(s.symbol_id, 0) * 0.001
+        candidates.sort(key=lambda s: s.score)
+
+    candidates = candidates[:5]
 
     # Expand: add direct callees in signature-only mode
     callee_names = {sym.name for sym in candidates}

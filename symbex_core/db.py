@@ -35,8 +35,10 @@ def init_schema(conn: sqlite3.Connection) -> None:
             is_test        INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS edges (
-            caller_id INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
-            callee_id INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
+            caller_id  INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
+            callee_id  INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
+            call_count INTEGER NOT NULL DEFAULT 1,
+            call_sites TEXT    NOT NULL DEFAULT '[]',
             PRIMARY KEY (caller_id, callee_id)
         );
         CREATE VIRTUAL TABLE IF NOT EXISTS bm25_index USING fts5(
@@ -48,6 +50,18 @@ def init_schema(conn: sqlite3.Connection) -> None:
         INSERT OR IGNORE INTO meta VALUES ('index_version', '0');
     """)
     conn.commit()
+    migrate_schema(conn)
+
+
+def migrate_schema(conn: sqlite3.Connection) -> None:
+    """Add columns introduced after the initial schema without dropping data."""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
+    if 'call_count' not in existing:
+        conn.execute("ALTER TABLE edges ADD COLUMN call_count INTEGER NOT NULL DEFAULT 1")
+    if 'call_sites' not in existing:
+        conn.execute("ALTER TABLE edges ADD COLUMN call_sites TEXT NOT NULL DEFAULT '[]'")
+    conn.commit()
+
 
 def get_index_version(conn: sqlite3.Connection) -> int:
     row = conn.execute("SELECT value FROM meta WHERE key='index_version'").fetchone()

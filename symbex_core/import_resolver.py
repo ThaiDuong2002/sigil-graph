@@ -4,6 +4,9 @@ from pathlib import Path
 
 from symbex_core.indexer import Symbol
 
+# (caller_name, callee_name, call_count, call_sites)
+EdgeData = tuple[str, str, int, list[int]]
+
 
 def extract_python_imports(source: str) -> dict[str, str]:
     """Returns {local_name: module_dotted_path} for all from-imports."""
@@ -78,27 +81,38 @@ def _module_to_file(module: str, root: Path, current_file: Path) -> Path | None:
     return None
 
 
+def _find_call_sites(source_text: str, callee_name: str, caller_start_line: int) -> list[int]:
+    """Return 1-based absolute line numbers where callee_name( appears in source_text."""
+    pattern = re.compile(r'\b' + re.escape(callee_name) + r'\s*\(')
+    sites = []
+    for i, line in enumerate(source_text.splitlines()):
+        if pattern.search(line):
+            sites.append(caller_start_line + i)
+    return sites
+
+
 def resolve_edges(
     symbols_by_file: dict[str, list[Symbol]],
     root: Path,
-) -> list[tuple[str, str]]:
+) -> list[EdgeData]:
     """
-    Returns [(caller_qualified_name, callee_qualified_name)] pairs.
-    Uses import maps to resolve cross-file calls.
+    Returns [(caller_name, callee_name, call_count, call_sites)] for all detected calls.
+
+    Covers both cross-file calls (via import resolution) and same-file calls.
+    call_sites contains 1-based absolute line numbers in the caller's source file.
     """
-    # Build lookup: (file_path, local_name) -> qualified symbol name
+    # Build global lookup: (file_path, local_name) -> qualified_name
     name_index: dict[tuple[str, str], str] = {}
     for file_path, syms in symbols_by_file.items():
         for sym in syms:
-            local = sym.name.split('.')[-1]  # strip class prefix
+            local = sym.name.split('.')[-1]
             name_index[(file_path, local)] = sym.name
 
-    # Build a reverse lookup: absolute resolved path -> relative file_path key used in name_index
     abs_to_rel: dict[str, str] = {}
     for file_path in symbols_by_file:
         abs_to_rel[str((root / file_path).resolve())] = file_path
 
-    edges: list[tuple[str, str]] = []
+    edges: list[EdgeData] = []
 
     for file_path, syms in symbols_by_file.items():
         abs_path = root / file_path
@@ -112,7 +126,7 @@ def resolve_edges(
         else:
             imports = extract_typescript_imports(source)
 
-        # Map: local_name -> relative file_path (matching name_index keys)
+        # local_name -> relative file_path for cross-file imports
         resolved: dict[str, str] = {}
         for local_name, module in imports.items():
             target_file = _module_to_file(module, root, abs_path)
@@ -122,12 +136,45 @@ def resolve_edges(
                 if rel_target:
                     resolved[local_name] = rel_target
 
+        # local_name -> qualified_name for same-file symbols
+        same_file: dict[str, str] = {}
+        for sym in syms:
+            local = sym.name.split('.')[-1]
+            same_file[local] = sym.name
+
         for caller_sym in syms:
-            # Find call sites in caller's source text (simple name matching)
+            caller_local = caller_sym.name.split('.')[-1]
+
+            # Cross-file edges
             for local_name, rel_target_file in resolved.items():
-                if local_name + '(' in caller_sym.source_text:
+                sites = _find_call_sites(
+                    caller_sym.source_text, local_name, caller_sym.start_line
+                )
+                if sites:
                     callee_key = (rel_target_file, local_name)
                     if callee_key in name_index:
-                        edges.append((caller_sym.name, name_index[callee_key]))
+                        edges.append((
+                            caller_sym.name,
+                            name_index[callee_key],
+                            len(sites),
+                            sites,
+                        ))
+
+            # Same-file edges (skip symbols already covered by imports, skip self)
+            for local_name, qualified_name in same_file.items():
+                if local_name == caller_local:
+                    continue
+                if local_name in resolved:
+                    continue
+                sites = _find_call_sites(
+                    caller_sym.source_text, local_name, caller_sym.start_line
+                )
+                if sites:
+                    edges.append((
+                        caller_sym.name,
+                        qualified_name,
+                        len(sites),
+                        sites,
+                    ))
 
     return edges
