@@ -19,6 +19,7 @@ dev = ["pytest>=8.0", "pytest-cov"]
 
 [project.scripts]
 symbex = "symbex_cli.main:cli"
+symbex-mcp = "symbex_mcp.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["symbex_core", "symbex_mcp", "symbex_cli"]
