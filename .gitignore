@@ -22,7 +22,7 @@ wheels/
 *.egg
 .coverage
 htmlcov/
-.symbolex/
+.symbex/
 .idea/
 .vscode/
 *.swp
