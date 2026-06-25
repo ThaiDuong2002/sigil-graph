@@ -13,15 +13,34 @@ _START = "<!-- symbex-start -->"
 _END = "<!-- symbex-end -->"
 
 _AGENT_POLICY = """\
-## Symbex — Symbol-level context retrieval
+## Symbex — Symbol-graph retrieval
 
-Before reading any source file:
-1. Call `symbex_locate("<task>")` to get the exact symbols needed.
-2. Use `symbex_symbol("<name>")` instead of reading the whole file.
-3. Use `symbex_callers("<name>")` to find who calls a function.
-4. Use `symbex_impact("<name>")` before editing to see what breaks.
+This project is indexed by Symbex (`.symbex/` exists). Use Symbex MCP tools
+BEFORE Grep, Glob, or Read when you need to find or understand code.
 
-Never load a full file if symbex can answer the question.\
+| Instead of | Use |
+|---|---|
+| Grep + Read to find code | `symbex_locate("<task>")` |
+| Read to view a function | `symbex_symbol("<name>")` |
+| Grep to find callers | `symbex_callers("<name>")` |
+| Grep to find callees | `symbex_callees("<name>")` |
+| Guessing what breaks | `symbex_impact("<name>")` before any edit |
+| Reading files for project context | `symbex_knowledge()` at start of task |
+
+After `git pull`: run `symbex index` to sync the index.
+Never load a full file if symbex can answer with a symbol span.\
+"""
+
+_GLOBAL_POLICY = """\
+## Symbex
+
+In repositories with a `.symbex/` directory, use `symbex_*` MCP tools BEFORE
+Grep, Glob, or Read when you need to locate or understand code:
+- `symbex_knowledge()` — full project context at the start of a task
+- `symbex_locate("<task>")` — find relevant symbols (replaces grep + read)
+- `symbex_symbol("<name>")` — get a function's source span
+- `symbex_callers` / `symbex_callees` — navigate the call graph
+- `symbex_impact("<name>")` — check what breaks before editing\
 """
 
 
@@ -42,6 +61,26 @@ def upsert_agent_policy(file_path: Path, content: str) -> None:
         file_path.write_text(new_text)
     else:
         file_path.write_text(text.rstrip("\n") + "\n\n" + block)
+
+
+def register_global_claude(global_claude_dir: Path | None = None) -> Path:
+    """Write/update Symbex trigger policy in ~/.claude/CLAUDE.md."""
+    if global_claude_dir is None:
+        global_claude_dir = Path.home() / ".claude"
+    global_claude_dir.mkdir(parents=True, exist_ok=True)
+    target = global_claude_dir / "CLAUDE.md"
+    upsert_agent_policy(target, _GLOBAL_POLICY)
+    return target
+
+
+def register_global_agents_md(global_dir: Path | None = None) -> Path:
+    """Write/update Symbex trigger policy in ~/.agents/AGENTS.md."""
+    if global_dir is None:
+        global_dir = Path.home() / ".agents"
+    global_dir.mkdir(parents=True, exist_ok=True)
+    target = global_dir / "AGENTS.md"
+    upsert_agent_policy(target, _GLOBAL_POLICY)
+    return target
 
 
 def register_mcp_claude(project_root: Path, server_root: Path) -> None:
@@ -119,5 +158,12 @@ def init_cmd(ctx):
 
     register_mcp_gemini(server_root=root)
     click.echo("MCP server registered in ~/.gemini/config/mcp_config.json")
+
+    # E. Global agent policies
+    global_claude = register_global_claude()
+    click.echo(f"Global policy written to {global_claude}")
+
+    global_agents = register_global_agents_md()
+    click.echo(f"Global policy written to {global_agents}")
 
     click.echo("Done. Restart your agent IDE to load the MCP server.")

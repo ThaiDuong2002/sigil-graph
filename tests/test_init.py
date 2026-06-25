@@ -3,7 +3,13 @@ import pytest
 from pathlib import Path
 from symbex_core.db import get_db, init_schema
 from symbex_core.indexer import index_project
-from symbex_cli.init import upsert_agent_policy, register_mcp_claude, register_mcp_gemini
+from symbex_cli.init import (
+    upsert_agent_policy,
+    register_mcp_claude,
+    register_mcp_gemini,
+    register_global_claude,
+    register_global_agents_md,
+)
 
 
 _POLICY_CONTENT = "## Symbex\nUse it.\n"
@@ -65,6 +71,41 @@ def test_register_mcp_gemini_creates_file(tmp_path):
     assert gemini_config.exists()
     data = json.loads(gemini_config.read_text())
     assert "symbex" in data["mcpServers"]
+
+
+def test_global_claude_creates_file(tmp_path):
+    out = register_global_claude(global_claude_dir=tmp_path / ".claude")
+    assert out.exists()
+    text = out.read_text()
+    assert ".symbex/" in text
+    assert "symbex_locate" in text
+    assert _START in text
+
+
+def test_global_claude_is_idempotent(tmp_path):
+    d = tmp_path / ".claude"
+    register_global_claude(global_claude_dir=d)
+    register_global_claude(global_claude_dir=d)
+    text = (d / "CLAUDE.md").read_text()
+    assert text.count(_START) == 1
+
+
+def test_global_claude_appends_to_existing(tmp_path):
+    d = tmp_path / ".claude"
+    d.mkdir()
+    (d / "CLAUDE.md").write_text("# Existing global config\n\n## CodeGraph\nUse it.\n")
+    register_global_claude(global_claude_dir=d)
+    text = (d / "CLAUDE.md").read_text()
+    assert "# Existing global config" in text
+    assert "CodeGraph" in text
+    assert "symbex_locate" in text
+
+
+def test_global_agents_md_creates_file(tmp_path):
+    out = register_global_agents_md(global_dir=tmp_path / ".agents")
+    assert out.exists()
+    text = out.read_text()
+    assert "symbex_locate" in text
 
 
 def test_register_mcp_gemini_merges_existing(tmp_path):
