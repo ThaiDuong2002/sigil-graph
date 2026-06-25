@@ -52,7 +52,10 @@ def extract_typescript_imports(source: str) -> dict[str, str]:
 
 
 def _module_to_file(module: str, root: Path, current_file: Path) -> Path | None:
-    """Best-effort: map a module path to a .py file under root."""
+    """Best-effort: map a module/import path to a source file under root."""
+    _py_suffixes = ('.py', '/__init__.py')
+    _ts_suffixes = ('.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.js')
+
     if module.startswith('.'):
         # relative import
         base = current_file.parent
@@ -61,14 +64,14 @@ def _module_to_file(module: str, root: Path, current_file: Path) -> Path | None:
             candidate = base / Path(parts.replace('.', '/'))
         else:
             candidate = base
-        for suffix in ('.py', '/__init__.py'):
+        for suffix in _py_suffixes + _ts_suffixes:
             p = Path(str(candidate) + suffix)
             if p.exists():
                 return p
         return None
-    # absolute import: try root/module/path.py
+    # absolute import: try root/module/path.py (Python) or root/module (TS)
     candidate = root / Path(module.replace('.', '/'))
-    for suffix in ('.py', '/__init__.py'):
+    for suffix in _py_suffixes + _ts_suffixes:
         p = Path(str(candidate) + suffix)
         if p.exists():
             return p

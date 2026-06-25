@@ -57,10 +57,17 @@ def extract_symbols_python(source: str, file_path: str, is_test: bool) -> list[S
 
     def _sig(start_row: int) -> str:
         raw = lines[start_row] if lines else ''
-        # strip trailing colon if present to add ellipsis
+        # If this line is a decorator, walk forward to find the actual def/class line
+        idx = start_row
+        while raw.lstrip().startswith('@') and idx + 1 < len(lines):
+            idx += 1
+            raw = lines[idx]
         raw = raw.rstrip()
+        # strip trailing colon if present to add ellipsis
         if raw.endswith(':'):
             raw = raw[:-1]
+        # strip trailing open-paren or trailing comma (truncated multi-line sig)
+        raw = raw.rstrip('(').rstrip(',').rstrip()
         return raw + ': ...'
 
     def _walk(node: Node, class_name: str | None = None) -> None:
@@ -96,8 +103,10 @@ def extract_symbols_python(source: str, file_path: str, is_test: bool) -> list[S
                     signature_text=_sig(node.start_point[0]),
                     is_test=is_test,
                 ))
+                # Only recurse into block children to avoid double-inserting methods
                 for child in node.children:
-                    _walk(child, cname)
+                    if child.type == 'block':
+                        _walk(child, cname)
         else:
             for child in node.children:
                 _walk(child, class_name)
@@ -117,8 +126,15 @@ def extract_symbols_typescript(source: str, file_path: str, is_test: bool) -> li
 
     def _sig(start_row: int) -> str:
         raw = lines[start_row].rstrip() if lines else ''
+        # If this line is a decorator, walk forward to find the actual def/class line
+        idx = start_row
+        while raw.lstrip().startswith('@') and idx + 1 < len(lines):
+            idx += 1
+            raw = lines[idx].rstrip()
         if raw.endswith('{'):
             raw = raw[:-1].rstrip()
+        # strip trailing open-paren or trailing comma (truncated multi-line sig)
+        raw = raw.rstrip('(').rstrip(',').rstrip()
         return raw + ': ...'
 
     def _walk(node: Node, class_name: str | None = None) -> None:
@@ -155,6 +171,7 @@ def extract_symbols_typescript(source: str, file_path: str, is_test: bool) -> li
                     signature_text=_sig(node.start_point[0]),
                     is_test=is_test,
                 ))
+            # method_definition contains a statement_block; no further method nesting expected
             for child in node.children:
                 _walk(child, class_name)
 
@@ -172,8 +189,10 @@ def extract_symbols_typescript(source: str, file_path: str, is_test: bool) -> li
                     signature_text=_sig(node.start_point[0]),
                     is_test=is_test,
                 ))
+                # Only recurse into class_body to avoid double-inserting methods
                 for child in node.children:
-                    _walk(child, cname)
+                    if child.type == 'class_body':
+                        _walk(child, cname)
         else:
             for child in node.children:
                 _walk(child, class_name)
@@ -215,31 +234,32 @@ def _upsert_file(path: Path, root: Path, conn: sqlite3.Connection) -> list[Symbo
 
     symbols = _extract_file(path, root)
 
-    # Remove old data for this file
-    old_ids = [r[0] for r in conn.execute(
-        "SELECT id FROM symbols WHERE file_path=?", (rel,)
-    ).fetchall()]
-    if old_ids:
-        placeholders = ','.join('?' * len(old_ids))
-        conn.execute(
-            f"DELETE FROM edges WHERE caller_id IN ({placeholders}) OR callee_id IN ({placeholders})",
-            old_ids + old_ids,
-        )
-        conn.execute(f"DELETE FROM symbols WHERE id IN ({placeholders})", old_ids)
+    with conn:
+        # Remove old data for this file
+        old_ids = [r[0] for r in conn.execute(
+            "SELECT id FROM symbols WHERE file_path=?", (rel,)
+        ).fetchall()]
+        if old_ids:
+            placeholders = ','.join('?' * len(old_ids))
+            conn.execute(
+                f"DELETE FROM edges WHERE caller_id IN ({placeholders}) OR callee_id IN ({placeholders})",
+                old_ids + old_ids,
+            )
+            conn.execute(f"DELETE FROM symbols WHERE id IN ({placeholders})", old_ids)
 
-    for sym in symbols:
-        conn.execute(
-            "INSERT INTO symbols(name,kind,file_path,start_line,end_line,"
-            "source_text,signature_text,is_test) VALUES(?,?,?,?,?,?,?,?)",
-            (sym.name, sym.kind, sym.file_path, sym.start_line, sym.end_line,
-             sym.source_text, sym.signature_text, int(sym.is_test)),
-        )
+        for sym in symbols:
+            conn.execute(
+                "INSERT INTO symbols(name,kind,file_path,start_line,end_line,"
+                "source_text,signature_text,is_test) VALUES(?,?,?,?,?,?,?,?)",
+                (sym.name, sym.kind, sym.file_path, sym.start_line, sym.end_line,
+                 sym.source_text, sym.signature_text, int(sym.is_test)),
+            )
 
-    mtime = path.stat().st_mtime
-    conn.execute(
-        "INSERT OR REPLACE INTO files(path,mtime,hash) VALUES(?,?,?)",
-        (rel, mtime, current_hash),
-    )
+        mtime = path.stat().st_mtime
+        conn.execute(
+            "INSERT OR REPLACE INTO files(path,mtime,hash) VALUES(?,?,?)",
+            (rel, mtime, current_hash),
+        )
     return symbols
 
 
@@ -248,21 +268,57 @@ def index_project(root: Path, conn: sqlite3.Connection) -> dict:
     from symbex_core.db import bump_index_version
     from symbex_core.import_resolver import resolve_edges
 
-    all_symbols: dict[str, list[Symbol]] = {}
     changed_files: list[Path] = []
     total_symbols = 0
 
+    # Collect the set of all on-disk source files (relative paths)
+    on_disk_rels: set[str] = set()
     for path in iter_source_files(root):
+        rel = str(path.relative_to(root))
+        on_disk_rels.add(rel)
         result = _upsert_file(path, root, conn)
         if result is not None:
-            rel = str(path.relative_to(root))
-            all_symbols[rel] = result
             changed_files.append(path)
             total_symbols += len(result)
 
-    if changed_files:
-        # Rebuild edges for changed files
-        edges = resolve_edges(all_symbols, root)
+    # Critical 3: remove ghost files (deleted/renamed) from the DB
+    db_rels = {row[0] for row in conn.execute("SELECT path FROM files").fetchall()}
+    ghost_rels = db_rels - on_disk_rels
+    if ghost_rels:
+        for ghost_rel in ghost_rels:
+            old_ids = [r[0] for r in conn.execute(
+                "SELECT id FROM symbols WHERE file_path=?", (ghost_rel,)
+            ).fetchall()]
+            if old_ids:
+                placeholders = ','.join('?' * len(old_ids))
+                conn.execute(
+                    f"DELETE FROM edges WHERE caller_id IN ({placeholders}) OR callee_id IN ({placeholders})",
+                    old_ids + old_ids,
+                )
+                conn.execute(f"DELETE FROM symbols WHERE id IN ({placeholders})", old_ids)
+            conn.execute("DELETE FROM files WHERE path=?", (ghost_rel,))
+        conn.commit()
+
+    if changed_files or ghost_rels:
+        # Critical 2: rebuild ALL edges from the full symbol set so cross-file
+        # edges between changed and unchanged files are not lost.
+        # Build symbols_by_file from the complete symbols table.
+        full_symbols: dict[str, list[Symbol]] = {}
+        for row in conn.execute(
+            "SELECT name,kind,file_path,start_line,end_line,source_text,signature_text,is_test "
+            "FROM symbols"
+        ).fetchall():
+            sym = Symbol(
+                name=row[0], kind=row[1], file_path=row[2],
+                start_line=row[3], end_line=row[4],
+                source_text=row[5], signature_text=row[6],
+                is_test=bool(row[7]),
+            )
+            full_symbols.setdefault(row[2], []).append(sym)
+
+        # Drop all existing edges and re-resolve from scratch
+        conn.execute("DELETE FROM edges")
+        edges = resolve_edges(full_symbols, root)
         for caller_name, callee_name in edges:
             caller_row = conn.execute(
                 "SELECT id FROM symbols WHERE name=?", (caller_name,)
