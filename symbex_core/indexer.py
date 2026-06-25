@@ -1,5 +1,7 @@
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterator
 import hashlib
 
 import tree_sitter_python as tspython
@@ -178,3 +180,107 @@ def extract_symbols_typescript(source: str, file_path: str, is_test: bool) -> li
 
     _walk(tree.root_node)
     return symbols
+
+
+def iter_source_files(root: Path) -> Iterator[Path]:
+    """Yield all source files under root, excluding EXCLUDE_DIRS and large files."""
+    for path in root.rglob('*'):
+        if not path.is_file():
+            continue
+        if any(excl in path.parts for excl in EXCLUDE_DIRS):
+            continue
+        if path.stat().st_size > EXCLUDE_SIZE:
+            continue
+        if path.suffix in ('.py', '.ts', '.js', '.tsx', '.jsx'):
+            yield path
+
+
+def _extract_file(path: Path, root: Path) -> list[Symbol]:
+    """Extract symbols from a source file."""
+    source = path.read_text(encoding='utf-8', errors='ignore')
+    rel = str(path.relative_to(root))
+    test = is_test_file(path)
+    if path.suffix == '.py':
+        return extract_symbols_python(source, rel, test)
+    return extract_symbols_typescript(source, rel, test)
+
+
+def _upsert_file(path: Path, root: Path, conn: sqlite3.Connection) -> list[Symbol] | None:
+    """Re-index a file if its hash changed. Returns new symbols or None if unchanged."""
+    rel = str(path.relative_to(root))
+    current_hash = file_hash(path)
+    row = conn.execute("SELECT hash FROM files WHERE path=?", (rel,)).fetchone()
+    if row and row[0] == current_hash:
+        return None  # unchanged
+
+    symbols = _extract_file(path, root)
+
+    # Remove old data for this file
+    old_ids = [r[0] for r in conn.execute(
+        "SELECT id FROM symbols WHERE file_path=?", (rel,)
+    ).fetchall()]
+    if old_ids:
+        placeholders = ','.join('?' * len(old_ids))
+        conn.execute(
+            f"DELETE FROM edges WHERE caller_id IN ({placeholders}) OR callee_id IN ({placeholders})",
+            old_ids + old_ids,
+        )
+        conn.execute(f"DELETE FROM symbols WHERE id IN ({placeholders})", old_ids)
+
+    for sym in symbols:
+        conn.execute(
+            "INSERT INTO symbols(name,kind,file_path,start_line,end_line,"
+            "source_text,signature_text,is_test) VALUES(?,?,?,?,?,?,?,?)",
+            (sym.name, sym.kind, sym.file_path, sym.start_line, sym.end_line,
+             sym.source_text, sym.signature_text, int(sym.is_test)),
+        )
+
+    mtime = path.stat().st_mtime
+    conn.execute(
+        "INSERT OR REPLACE INTO files(path,mtime,hash) VALUES(?,?,?)",
+        (rel, mtime, current_hash),
+    )
+    return symbols
+
+
+def index_project(root: Path, conn: sqlite3.Connection) -> dict:
+    """Index all source files in root incrementally. Returns stats dict."""
+    from symbex_core.db import bump_index_version
+    from symbex_core.import_resolver import resolve_edges
+
+    all_symbols: dict[str, list[Symbol]] = {}
+    changed_files: list[Path] = []
+    total_symbols = 0
+
+    for path in iter_source_files(root):
+        result = _upsert_file(path, root, conn)
+        if result is not None:
+            rel = str(path.relative_to(root))
+            all_symbols[rel] = result
+            changed_files.append(path)
+            total_symbols += len(result)
+
+    if changed_files:
+        # Rebuild edges for changed files
+        edges = resolve_edges(all_symbols, root)
+        for caller_name, callee_name in edges:
+            caller_row = conn.execute(
+                "SELECT id FROM symbols WHERE name=?", (caller_name,)
+            ).fetchone()
+            callee_row = conn.execute(
+                "SELECT id FROM symbols WHERE name=?", (callee_name,)
+            ).fetchone()
+            if caller_row and callee_row:
+                conn.execute(
+                    "INSERT OR IGNORE INTO edges(caller_id, callee_id) VALUES(?,?)",
+                    (caller_row[0], callee_row[0]),
+                )
+
+        # Rebuild FTS5 index
+        conn.execute("INSERT INTO bm25_index(bm25_index) VALUES('rebuild')")
+        conn.commit()
+        bump_index_version(conn)
+
+    total_files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+    total_edges = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+    return {"symbols": total_symbols, "files": total_files, "edges": total_edges}
