@@ -76,3 +76,42 @@ def search_bm25(
             score=float(score),
         ))
     return results
+
+
+def locate(
+    conn: sqlite3.Connection,
+    task: str,
+    budget: int = 2000,
+    cache=None,
+) -> list[SymbolResult]:
+    """Find the minimal set of symbols relevant to `task` within `budget` tokens."""
+    from symbex_core.db import get_index_version
+    from symbex_core.graph import get_callees
+    from symbex_core.trimmer import trim_to_budget
+
+    version = get_index_version(conn)
+    cache_key = (task, version)
+
+    if cache is not None:
+        cache.invalidate_if_stale(conn)
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+    candidates = search_bm25(conn, task, limit=5)
+
+    # Expand: add direct callees in signature-only mode
+    callee_names = set()
+    expanded: list[SymbolResult] = list(candidates)
+    for sym in candidates:
+        for callee in get_callees(conn, sym.name, depth=1):
+            if callee.name not in callee_names:
+                callee_names.add(callee.name)
+                expanded.append(callee)
+
+    result = trim_to_budget(expanded, budget)
+
+    if cache is not None:
+        cache.set(cache_key, result)
+
+    return result
