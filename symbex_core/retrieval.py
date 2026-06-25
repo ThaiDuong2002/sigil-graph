@@ -101,7 +101,7 @@ def locate(
     candidates = search_bm25(conn, task, limit=5)
 
     # Expand: add direct callees in signature-only mode
-    callee_names = set()
+    callee_names = {sym.name for sym in candidates}
     expanded: list[SymbolResult] = list(candidates)
     for sym in candidates:
         for callee in get_callees(conn, sym.name, depth=1):
