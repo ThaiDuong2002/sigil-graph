@@ -30,9 +30,6 @@ def search_bm25(
     if not task.strip():
         return []
 
-    # Escape FTS5 special characters
-    safe_task = task.replace('"', '""').replace("'", "''")
-
     try:
         rows = conn.execute(
             """
@@ -47,9 +44,9 @@ def search_bm25(
             ORDER BY score
             LIMIT ?
             """,
-            (safe_task, int(include_tests), limit),
+            (task.strip(), int(include_tests), limit),
         ).fetchall()
-    except Exception:
+    except sqlite3.OperationalError:
         # FTS5 query syntax error — fall back to LIKE
         rows = conn.execute(
             """
