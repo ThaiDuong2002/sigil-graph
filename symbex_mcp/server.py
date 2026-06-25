@@ -5,7 +5,7 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from symbex_core.cache import QueryCache
-from symbex_core.db import get_db, get_index_version, init_schema
+from symbex_core.db import get_db, init_schema
 from symbex_core.graph import get_callers, get_callees, get_impact
 from symbex_core.indexer import index_project
 from symbex_core.retrieval import SymbolResult, locate, search_bm25
