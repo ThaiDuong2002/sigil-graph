@@ -6,6 +6,7 @@ import click
 from symbex_core.db import get_db, get_index_version, init_schema
 from symbex_core.graph import get_callers, get_callees, get_impact
 from symbex_core.indexer import index_project
+from symbex_core.knowledge import write_knowledge
 from symbex_core.retrieval import locate, search_bm25
 
 
@@ -217,6 +218,16 @@ def status_cmd(ctx):
     click.echo(f"Files:    {file_count}")
     click.echo(f"Edges:    {edge_count}")
     click.echo(f"Version:  {version}")
+
+
+@cli.command("knowledge")
+@click.pass_context
+def knowledge_cmd(ctx):
+    """Generate project knowledge: architecture, business logic, conventions."""
+    root = ctx.obj["root"]
+    conn = _open_db(root)
+    out = write_knowledge(conn, root)
+    click.echo(f"Project knowledge written to {out}")
 
 
 from symbex_cli.init import init_cmd

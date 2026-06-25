@@ -6,6 +6,7 @@ import click
 
 from symbex_core.db import get_db, init_schema
 from symbex_core.indexer import index_project
+from symbex_core.knowledge import write_knowledge
 from symbex_core.overview import write_overview
 
 _START = "<!-- symbex-start -->"
@@ -100,9 +101,11 @@ def init_cmd(ctx):
         f"{stats['edges']} edges"
     )
 
-    # B. Overview
+    # B. Overview + Knowledge
     overview_path = write_overview(conn, root)
     click.echo(f"Overview written to {overview_path.relative_to(root)}")
+    knowledge_path = write_knowledge(conn, root)
+    click.echo(f"Project knowledge written to {knowledge_path.relative_to(root)}")
 
     # C. Agent policy
     for fname in ("CLAUDE.md", "AGENTS.md", "GEMINI.md"):

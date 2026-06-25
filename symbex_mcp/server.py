@@ -8,6 +8,7 @@ from symbex_core.cache import QueryCache
 from symbex_core.db import get_db, init_schema
 from symbex_core.graph import get_callers, get_callees, get_impact
 from symbex_core.indexer import index_project
+from symbex_core.knowledge import generate_knowledge
 from symbex_core.retrieval import SymbolResult, locate, search_bm25
 
 mcp = FastMCP("symbex")
@@ -203,6 +204,13 @@ def symbex_index(path: str = ".") -> dict:
 def symbex_tests(name: str) -> dict:
     """Return test symbols whose source references the named symbol."""
     return _get_tests(_get_conn(), name)
+
+
+@mcp.tool()
+def symbex_knowledge() -> dict:
+    """Return the full project knowledge document: architecture, business logic, conventions, hotspots."""
+    text = generate_knowledge(_get_conn(), _root)
+    return {"knowledge": text}
 
 
 # ---------------------------------------------------------------------------
