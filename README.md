@@ -58,22 +58,27 @@ cd ~/Projects/my-app
 symbex init
 ```
 
-This does four things:
+This does six things:
 
 1. **Index** — Parses all Python/TS/JS files into SQLite (`.symbex/symbex.db`). Automatically skips `node_modules`, `venv`, `dist`, and files over 500 KB.
-2. **Overview** — Writes `.symbex/overview.md` — a project summary derived from the symbol graph: entry points, key classes, top modules.
-3. **Agent policy** — Appends a guidance block to `CLAUDE.md`, `AGENTS.md`, and `GEMINI.md` so agents know to reach for Symbex before reading files.
-4. **MCP registration** — Writes to `.mcp.json` (Claude Code) and `~/.gemini/config/mcp_config.json` (Gemini/Antigravity). Restart your agent IDE to load.
+2. **Overview** — Writes `.symbex/overview.md` — a compact project summary.
+3. **Knowledge** — Writes `.symbex/knowledge.md` — architecture, business logic, conventions, and hotspots derived from the full symbol graph.
+4. **Agent policy** — Appends a guidance block to `CLAUDE.md`, `AGENTS.md`, and `GEMINI.md` so agents know to reach for Symbex before reading files.
+5. **Global policy** — Writes a trigger-based rule to `~/.claude/CLAUDE.md` and `~/.agents/AGENTS.md` so agents use Symbex automatically in any indexed repo, without being told per session.
+6. **MCP registration** — Writes to `.mcp.json` (Claude Code) and `~/.gemini/config/mcp_config.json` (Gemini/Antigravity). Restart your agent IDE to load.
 
 ```
 Indexing project...
 Indexed 142 symbols, 23 files, 89 edges
 Overview written to .symbex/overview.md
+Project knowledge written to .symbex/knowledge.md
 Agent policy written to CLAUDE.md
 Agent policy written to AGENTS.md
 Agent policy written to GEMINI.md
 MCP server registered in .mcp.json
 MCP server registered in ~/.gemini/config/mcp_config.json
+Global policy written to ~/.claude/CLAUDE.md
+Global policy written to ~/.agents/AGENTS.md
 Done. Restart your agent IDE to load the MCP server.
 ```
 
@@ -96,7 +101,7 @@ symbex index
 
 ### `symbex locate <task>`
 
-The core command. Uses BM25 search + call-graph expansion + token-aware trimming to return the minimal set of symbols within a token budget.
+The core command. Uses BM25 search + call-graph expansion + token-aware trimming to return the minimal set of symbols within a token budget. Frequently-called symbols are boosted in ranking so central functions surface even with imprecise queries.
 
 ```bash
 symbex locate "fix login token" --budget 2000
@@ -137,35 +142,43 @@ symbex symbol "refresh_token"
 
 ### `symbex callers <name>`
 
-Who calls this function?
+Who calls this function, how many times, and from which lines?
 
 ```bash
 symbex callers "refresh_token"
 
 # Callers of 'refresh_token' (2):
-#   api.py:34  api_refresh  (function)
+#   api.py:34  api_refresh  (function, 2x)
+#   called at lines: 41, 67
 #   def api_refresh(req): ...
 #
-#   handler.py:89  handle_auth  (function)
+#   handler.py:89  handle_auth  (function, 1x)
+#   called at lines: 94
 #   def handle_auth(ctx): ...
 ```
+
+Results are sorted by call count descending — the heaviest caller appears first.
 
 ---
 
 ### `symbex callees <name>`
 
-What does this function call?
+What does this function call, how many times, and from which lines?
 
 ```bash
 symbex callees "login"
 
 # Callees of 'login' (2):
-#   auth.py:67  validate_user  (function)
+#   auth.py:12  validate_user  (function, 1x)
+#   called at lines: 18
 #   def validate_user(user: str) -> bool: ...
 #
-#   tokens.py:8  refresh_token  (function)
+#   tokens.py:8  refresh_token  (function, 2x)
+#   called at lines: 22, 31
 #   def refresh_token(user_id: int, token: str) -> str: ...
 ```
+
+Tracks both cross-file calls (via imports) and same-file calls.
 
 ---
 
@@ -177,10 +190,32 @@ What breaks if this function changes? Use before refactoring or changing a signa
 symbex impact "refresh_token"
 
 # 'refresh_token' affects 3 callers:
-#   api.py:34     api_refresh
-#   handler.py:89 handle_auth
-#   test_auth.py:12 test_refresh_ok
+#   api.py:34     api_refresh  (2x)  lines: 41, 67
+#   handler.py:89 handle_auth  (1x)  lines: 94
+#   test_auth.py:12 test_refresh_ok  (1x)  lines: 15
 ```
+
+---
+
+### `symbex knowledge`
+
+Generate `.symbex/knowledge.md` — a static-analysis document that gives an AI agent a complete picture of the project before it reads a single source file.
+
+```bash
+symbex knowledge
+# Project knowledge written to .symbex/knowledge.md
+```
+
+The generated file has four sections:
+
+| Section | Contents |
+|---|---|
+| **Architecture** | Module layers (API/Service/Model/Data auto-detected), entry points, top cross-module call paths |
+| **Business Logic** | Core functions by incoming call volume, orchestrators by out-degree, domain classes by method count — all with inline docstrings |
+| **Conventions** | Naming style, type-hint coverage %, docstring coverage %, common prefixes (`get_*`, `validate_*`...), architectural class suffixes (`*Service`, `*Repository`...) |
+| **Hotspots** | Largest functions by line count, test coverage map |
+
+Also generated automatically by `symbex init`.
 
 ---
 
@@ -249,15 +284,29 @@ Token counts estimated using `len(text) / 4` — consistent with major LLM token
 
 ## How It Works
 
+### Locate pipeline
+
 Each call to `symbex locate` (CLI) or `symbex_locate` (MCP tool) runs the same pipeline:
 
 ```
-BM25 Search  →  Call Graph  →  Token Trim  →  Cache
-Top 5 matches   Add callees     Fit budget      Return on repeat
-                as signatures   (default 2000)
+BM25 Search  →  Call-count boost  →  Call Graph  →  Token Trim  →  Cache
+Top 20 matches  Rank by frequency    Add callees     Fit budget      Hit on repeat
+                (central functions   as signatures   (default 2000)
+                surface first)
 ```
 
-Indexing is incremental: each file's SHA-256 is stored, and only files with a changed hash are re-parsed. After `git pull`, run `symbex index` to sync.
+### Edge data
+
+Every edge in the call graph stores:
+
+- **`call_count`** — how many times the caller calls the callee
+- **`call_sites`** — the exact line numbers of each call site
+
+This covers both cross-file calls (via import resolution) and same-file calls. Results from `callers`, `callees`, and `impact` are sorted by call count so the most load-bearing relationships appear first.
+
+### Incremental indexing
+
+Each file's SHA-256 hash is stored. Only files with a changed hash are re-parsed. After `git pull`, `symbex index` syncs in seconds regardless of project size.
 
 ---
 
@@ -270,3 +319,24 @@ symbex index
 ```
 
 Unchanged files are skipped entirely regardless of project size.
+
+---
+
+## Agent Integration
+
+After `symbex init`, agents receive two layers of guidance:
+
+**Per-project** (`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`):
+
+| Instead of | Use |
+|---|---|
+| Grep + Read to find code | `symbex_locate("<task>")` |
+| Read to view a function | `symbex_symbol("<name>")` |
+| Grep to find callers | `symbex_callers("<name>")` |
+| Grep to find callees | `symbex_callees("<name>")` |
+| Guessing what breaks | `symbex_impact("<name>")` before any edit |
+| Reading files for project context | `symbex_knowledge()` at start of task |
+
+**Global** (`~/.claude/CLAUDE.md` / `~/.agents/AGENTS.md`):
+
+A trigger-based rule that fires automatically in any repo with a `.symbex/` directory — no per-session instructions needed.
