@@ -1,0 +1,81 @@
+import sqlite3
+from dataclasses import dataclass
+
+
+@dataclass
+class SymbolResult:
+    symbol_id: int
+    name: str
+    kind: str
+    file_path: str
+    start_line: int
+    end_line: int
+    text: str
+    is_signature_only: bool
+    token_estimate: int
+    score: float
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, len(text) // 4)
+
+
+def search_bm25(
+    conn: sqlite3.Connection,
+    task: str,
+    limit: int = 20,
+    include_tests: bool = False,
+) -> list[SymbolResult]:
+    """Full-text search over symbol names and signatures using FTS5 BM25."""
+    if not task.strip():
+        return []
+
+    # Escape FTS5 special characters
+    safe_task = task.replace('"', '""').replace("'", "''")
+
+    try:
+        rows = conn.execute(
+            """
+            SELECT s.id, s.name, s.kind, s.file_path,
+                   s.start_line, s.end_line, s.source_text,
+                   s.signature_text, s.is_test,
+                   bm25(bm25_index) AS score
+            FROM bm25_index
+            JOIN symbols s ON s.id = bm25_index.rowid
+            WHERE bm25_index MATCH ?
+              AND (? OR s.is_test = 0)
+            ORDER BY score
+            LIMIT ?
+            """,
+            (safe_task, int(include_tests), limit),
+        ).fetchall()
+    except Exception:
+        # FTS5 query syntax error — fall back to LIKE
+        rows = conn.execute(
+            """
+            SELECT id, name, kind, file_path, start_line, end_line,
+                   source_text, signature_text, is_test, 0.0
+            FROM symbols
+            WHERE (name LIKE ? OR signature_text LIKE ?)
+              AND (? OR is_test = 0)
+            LIMIT ?
+            """,
+            (f"%{task}%", f"%{task}%", int(include_tests), limit),
+        ).fetchall()
+
+    results = []
+    for row in rows:
+        sid, name, kind, file_path, sl, el, source, sig, is_test, score = row
+        results.append(SymbolResult(
+            symbol_id=sid,
+            name=name,
+            kind=kind,
+            file_path=file_path,
+            start_line=sl,
+            end_line=el,
+            text=source,
+            is_signature_only=False,
+            token_estimate=_estimate_tokens(source),
+            score=float(score),
+        ))
+    return results
