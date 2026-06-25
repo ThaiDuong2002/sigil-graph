@@ -1,0 +1,61 @@
+import sqlite3
+from pathlib import Path
+
+_DB_SUBPATH = ".symbex/symbex.db"
+
+def get_db(root: Path) -> sqlite3.Connection:
+    db_path = root / _DB_SUBPATH
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    return conn
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS meta (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS files (
+            path  TEXT PRIMARY KEY,
+            mtime REAL NOT NULL,
+            hash  TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS symbols (
+            id             INTEGER PRIMARY KEY,
+            name           TEXT NOT NULL,
+            kind           TEXT NOT NULL,
+            file_path      TEXT NOT NULL,
+            start_line     INTEGER NOT NULL,
+            end_line       INTEGER NOT NULL,
+            source_text    TEXT NOT NULL,
+            signature_text TEXT NOT NULL,
+            is_test        INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS edges (
+            caller_id INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
+            callee_id INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
+            PRIMARY KEY (caller_id, callee_id)
+        );
+        CREATE VIRTUAL TABLE IF NOT EXISTS bm25_index USING fts5(
+            name,
+            signature_text,
+            content=symbols,
+            content_rowid=id
+        );
+        INSERT OR IGNORE INTO meta VALUES ('index_version', '0');
+    """)
+    conn.commit()
+
+def get_index_version(conn: sqlite3.Connection) -> int:
+    row = conn.execute("SELECT value FROM meta WHERE key='index_version'").fetchone()
+    return int(row[0]) if row else 0
+
+def bump_index_version(conn: sqlite3.Connection) -> int:
+    conn.execute(
+        "UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) "
+        "WHERE key = 'index_version'"
+    )
+    conn.commit()
+    return get_index_version(conn)
