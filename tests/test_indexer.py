@@ -1,7 +1,9 @@
 from pathlib import Path
-from symbex_core.indexer import Symbol, extract_symbols_python
+import tree_sitter_typescript  # noqa: import check
+from symbex_core.indexer import Symbol, extract_symbols_python, extract_symbols_typescript
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample.py"
+FIXTURE_TS = Path(__file__).parent / "fixtures" / "sample.ts"
 
 def test_extracts_top_level_function():
     source = FIXTURE.read_text()
@@ -46,3 +48,25 @@ def test_is_test_flag_propagated():
     source = FIXTURE.read_text()
     symbols = extract_symbols_python(source, "tests/sample.py", is_test=True)
     assert all(s.is_test for s in symbols)
+
+
+def test_ts_extracts_top_level_function():
+    source = FIXTURE_TS.read_text()
+    symbols = extract_symbols_typescript(source, "sample.ts", is_test=False)
+    names = [s.name for s in symbols]
+    assert "greet" in names
+
+
+def test_ts_extracts_class():
+    source = FIXTURE_TS.read_text()
+    symbols = extract_symbols_typescript(source, "sample.ts", is_test=False)
+    names = [s.name for s in symbols]
+    assert "AuthService" in names
+
+
+def test_ts_extracts_methods_with_qualified_name():
+    source = FIXTURE_TS.read_text()
+    symbols = extract_symbols_typescript(source, "sample.ts", is_test=False)
+    names = [s.name for s in symbols]
+    assert "AuthService.login" in names
+    assert "AuthService.logout" in names
