@@ -203,4 +203,5 @@ def status_cmd(ctx):
     click.echo(f"Version:  {version}")
 
 
-# Task 3: init command will be added here via cli.add_command(init_cmd)
+from symbex_cli.init import init_cmd
+cli.add_command(init_cmd)
