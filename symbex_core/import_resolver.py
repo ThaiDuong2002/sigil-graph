@@ -90,12 +90,17 @@ def resolve_edges(
             local = sym.name.split('.')[-1]  # strip class prefix
             name_index[(file_path, local)] = sym.name
 
+    # Build a reverse lookup: absolute resolved path -> relative file_path key used in name_index
+    abs_to_rel: dict[str, str] = {}
+    for file_path in symbols_by_file:
+        abs_to_rel[str((root / file_path).resolve())] = file_path
+
     edges: list[tuple[str, str]] = []
 
     for file_path, syms in symbols_by_file.items():
-        path = Path(file_path)
+        abs_path = root / file_path
         try:
-            source = path.read_text(encoding='utf-8', errors='ignore')
+            source = abs_path.read_text(encoding='utf-8', errors='ignore')
         except OSError:
             continue
 
@@ -104,18 +109,21 @@ def resolve_edges(
         else:
             imports = extract_typescript_imports(source)
 
-        # Map: local_name -> resolved file_path
+        # Map: local_name -> relative file_path (matching name_index keys)
         resolved: dict[str, str] = {}
         for local_name, module in imports.items():
-            target_file = _module_to_file(module, root, path)
+            target_file = _module_to_file(module, root, abs_path)
             if target_file:
-                resolved[local_name] = str(target_file.resolve())
+                abs_target = str(target_file.resolve())
+                rel_target = abs_to_rel.get(abs_target)
+                if rel_target:
+                    resolved[local_name] = rel_target
 
         for caller_sym in syms:
             # Find call sites in caller's source text (simple name matching)
-            for local_name, target_file in resolved.items():
+            for local_name, rel_target_file in resolved.items():
                 if local_name + '(' in caller_sym.source_text:
-                    callee_key = (target_file, local_name)
+                    callee_key = (rel_target_file, local_name)
                     if callee_key in name_index:
                         edges.append((caller_sym.name, name_index[callee_key]))
 
