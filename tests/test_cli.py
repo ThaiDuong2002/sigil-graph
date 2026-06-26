@@ -102,3 +102,22 @@ def test_status_command_not_indexed(tmp_path):
     result = runner.invoke(cli, ["--root", str(tmp_path), "status"])
     assert result.exit_code == 0
     assert "Not indexed" in result.output
+
+
+def test_version_flag():
+    runner = CliRunner()
+    result = runner.invoke(cli, ["--version"])
+    assert result.exit_code == 0
+    assert "symbex" in result.output
+    # Should contain a version string like "0.2.0" or "dev"
+    assert any(c.isdigit() or result.output.strip().endswith("dev") for c in result.output)
+
+
+def test_update_not_git_install(monkeypatch):
+    """update exits with error when not a git-based editable install."""
+    from symbex_cli import main as cli_main
+    monkeypatch.setattr(cli_main, "_find_install_dir", lambda: None)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["update"])
+    assert result.exit_code == 1
+    assert "Cannot auto-update" in result.output

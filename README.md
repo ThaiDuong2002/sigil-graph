@@ -58,7 +58,20 @@ pipx install git+https://github.com/ThaiDuong2002/symbex-graph.git
 ### Verify
 
 ```bash
+symbex --version
+# symbex, version 0.2.0
+
 symbex --help
+```
+
+### Updating
+
+```bash
+# Git-based installs (install.sh / install.ps1)
+symbex update
+
+# pipx installs
+pipx upgrade symbex-graph
 ```
 
 ---
@@ -100,7 +113,7 @@ Done. Restart your agent IDE to load the MCP server.
 
 ## Command Reference
 
-All commands accept `--root PATH` to specify a project root (defaults to the current directory).
+All commands accept `--root PATH` to specify a project root (defaults to the current directory). Run `symbex --version` to check the installed version.
 
 ### `symbex index`
 
@@ -230,6 +243,21 @@ The generated file has four sections:
 | **Hotspots** | Largest functions by line count, test coverage map |
 
 Also generated automatically by `symbex init`.
+
+---
+
+### `symbex update`
+
+Pull the latest version from GitHub and reinstall. Only works for git-based installs (`install.sh` / `install.ps1`).
+
+```bash
+symbex update
+# Updating symbex at ~/.symbex ...
+# Updated: a1b2c3d → e4f5a6b
+# Restart your shell to use the new version.
+```
+
+For pipx installs: `pipx upgrade symbex-graph`
 
 ---
 

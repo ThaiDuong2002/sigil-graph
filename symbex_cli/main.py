@@ -1,3 +1,5 @@
+import importlib.metadata
+import subprocess
 import sys
 from pathlib import Path
 
@@ -8,6 +10,20 @@ from symbex_core.graph import get_callers, get_callees, get_impact
 from symbex_core.indexer import index_project
 from symbex_core.knowledge import write_knowledge
 from symbex_core.retrieval import locate, search_bm25
+
+try:
+    _version = importlib.metadata.version("symbex")
+except importlib.metadata.PackageNotFoundError:
+    _version = "dev"
+
+
+def _find_install_dir() -> Path | None:
+    """Return the symbex git clone root, or None if not an editable git install."""
+    import symbex_core
+    candidate = Path(symbex_core.__file__).parent.parent
+    if (candidate / ".git").exists():
+        return candidate
+    return None
 
 
 def _open_db(root: Path):
@@ -28,6 +44,7 @@ def _fmt_symbol_header(name: str, kind: str, file_path: str,
 
 
 @click.group()
+@click.version_option(version=_version, prog_name="symbex")
 @click.option("--root", default=".", show_default=True,
               type=click.Path(exists=False), help="Project root directory.")
 @click.pass_context
@@ -228,6 +245,55 @@ def knowledge_cmd(ctx):
     conn = _open_db(root)
     out = write_knowledge(conn, root)
     click.echo(f"Project knowledge written to {out}")
+
+
+@cli.command("update")
+def update_cmd():
+    """Update symbex to the latest version (git-based installs only)."""
+    install_dir = _find_install_dir()
+    if install_dir is None:
+        click.echo(
+            "Cannot auto-update: symbex was not installed via install.sh/install.ps1.\n"
+            "  To update a pipx install:  pipx upgrade symbex-graph\n"
+            "  To reinstall from source:  re-run the one-liner install script."
+        )
+        sys.exit(1)
+
+    old_sha = subprocess.run(
+        ["git", "-C", str(install_dir), "rev-parse", "--short", "HEAD"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+
+    click.echo(f"Updating symbex at {install_dir} ...")
+
+    pull = subprocess.run(
+        ["git", "-C", str(install_dir), "pull"],
+        capture_output=True, text=True,
+    )
+    if pull.returncode != 0:
+        click.echo(f"git pull failed:\n{pull.stderr}", err=True)
+        sys.exit(1)
+
+    new_sha = subprocess.run(
+        ["git", "-C", str(install_dir), "rev-parse", "--short", "HEAD"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+
+    if old_sha == new_sha:
+        click.echo(f"Already up to date ({old_sha}).")
+        return
+
+    pip = Path(sys.executable).parent / "pip"
+    reinstall = subprocess.run(
+        [str(pip), "install", "-e", str(install_dir), "--quiet"],
+        capture_output=True, text=True,
+    )
+    if reinstall.returncode != 0:
+        click.echo(f"Reinstall failed:\n{reinstall.stderr}", err=True)
+        sys.exit(1)
+
+    click.echo(f"Updated: {old_sha} → {new_sha}")
+    click.echo("Restart your shell to use the new version.")
 
 
 from symbex_cli.init import init_cmd
