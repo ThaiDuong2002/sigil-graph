@@ -123,6 +123,8 @@ def resolve_edges(
 
         if file_path.endswith('.py'):
             imports = extract_python_imports(source)
+        elif file_path.endswith(('.cs', '.cshtml')):
+            imports = {}  # namespace-to-file mapping not supported; same-file edges still resolve
         else:
             imports = extract_typescript_imports(source)
 

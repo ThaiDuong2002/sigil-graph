@@ -5,8 +5,11 @@ from pathlib import Path
 from typing import Iterator
 import hashlib
 
+import re
+
 import tree_sitter_python as tspython
 import tree_sitter_typescript as tstypescript
+import tree_sitter_c_sharp as tscsharp
 from tree_sitter import Language, Parser, Node
 
 _PY_LANG = Language(tspython.language())
@@ -17,13 +20,20 @@ _TSX_LANG = Language(tstypescript.language_tsx())
 _TS_PARSER = Parser(_TS_LANG)
 _TSX_PARSER = Parser(_TSX_LANG)
 
+_CS_LANG = Language(tscsharp.language())
+_CS_PARSER = Parser(_CS_LANG)
+
 EXCLUDE_DIRS = frozenset({
     'node_modules', 'venv', '.venv', 'env', '.env',
     'dist', 'build', '__pycache__', '.git', '.symbex',
+    'bin', 'obj', 'packages',  # .NET build artefacts
 })
 EXCLUDE_SIZE = 500 * 1024
-TEST_SUFFIXES = ('_test.py', '.test.ts', '.test.js', '.spec.ts', '.spec.js')
-TEST_DIRS = frozenset({'tests', '__tests__', 'test'})
+TEST_SUFFIXES = (
+    '_test.py', '.test.ts', '.test.js', '.spec.ts', '.spec.js',
+    'Tests.cs', 'Test.cs', '_tests.cs',  # NUnit / xUnit
+)
+TEST_DIRS = frozenset({'tests', '__tests__', 'test', 'Tests', 'Test'})
 
 
 @dataclass
@@ -202,6 +212,173 @@ def extract_symbols_typescript(source: str, file_path: str, is_test: bool) -> li
     return symbols
 
 
+def _cs_name_before(node: Node, stop_types: set[str]) -> str | None:
+    """Return the last bare `identifier` child before any node in stop_types."""
+    prev_id: str | None = None
+    for child in node.children:
+        if child.type in stop_types:
+            break
+        if child.type == 'identifier':
+            prev_id = child.text.decode()
+    return prev_id
+
+
+def extract_symbols_csharp(source: str, file_path: str, is_test: bool) -> list[Symbol]:
+    tree = _CS_PARSER.parse(source.encode())
+    lines = source.splitlines()
+    symbols: list[Symbol] = []
+
+    def _source(start_row: int, end_row: int) -> str:
+        return '\n'.join(lines[start_row : end_row + 1])
+
+    def _sig(start_row: int) -> str:
+        raw = lines[start_row] if lines else ''
+        idx = start_row
+        # Skip C# attribute lines like [HttpGet], [Route("...")]
+        while raw.lstrip().startswith('[') and idx + 1 < len(lines):
+            idx += 1
+            raw = lines[idx]
+        raw = raw.rstrip()
+        if raw.endswith('{'):
+            raw = raw[:-1].rstrip() + ' { ... }'
+        return raw
+
+    def _walk(node: Node, class_name: str | None = None) -> None:
+        t = node.type
+
+        if t in ('class_declaration', 'interface_declaration',
+                  'struct_declaration', 'record_declaration',
+                  'record_struct_declaration'):
+            cname = _cs_name_before(
+                node, {'declaration_list', 'base_list', 'type_parameter_list'}
+            )
+            if cname:
+                symbols.append(Symbol(
+                    name=cname,
+                    kind='class',
+                    file_path=file_path,
+                    start_line=node.start_point[0] + 1,
+                    end_line=node.end_point[0] + 1,
+                    source_text=_source(node.start_point[0], node.end_point[0]),
+                    signature_text=_sig(node.start_point[0]),
+                    is_test=is_test,
+                ))
+                body = next(
+                    (c for c in node.children if c.type == 'declaration_list'), None
+                )
+                if body:
+                    _walk(body, cname)
+
+        elif t == 'enum_declaration':
+            cname = _cs_name_before(node, {'enum_member_declaration_list'})
+            if cname:
+                symbols.append(Symbol(
+                    name=cname,
+                    kind='class',
+                    file_path=file_path,
+                    start_line=node.start_point[0] + 1,
+                    end_line=node.end_point[0] + 1,
+                    source_text=_source(node.start_point[0], node.end_point[0]),
+                    signature_text=_sig(node.start_point[0]),
+                    is_test=is_test,
+                ))
+
+        elif t in ('method_declaration', 'local_function_statement'):
+            mname = _cs_name_before(
+                node, {'parameter_list', 'type_parameter_list', 'block'}
+            )
+            if mname:
+                qualified = f"{class_name}.{mname}" if class_name else mname
+                symbols.append(Symbol(
+                    name=qualified,
+                    kind='method' if class_name else 'function',
+                    file_path=file_path,
+                    start_line=node.start_point[0] + 1,
+                    end_line=node.end_point[0] + 1,
+                    source_text=_source(node.start_point[0], node.end_point[0]),
+                    signature_text=_sig(node.start_point[0]),
+                    is_test=is_test,
+                ))
+
+        elif t == 'constructor_declaration':
+            mname = _cs_name_before(node, {'parameter_list'})
+            if mname:
+                qualified = f"{class_name}.{mname}" if class_name else mname
+                symbols.append(Symbol(
+                    name=qualified,
+                    kind='method',
+                    file_path=file_path,
+                    start_line=node.start_point[0] + 1,
+                    end_line=node.end_point[0] + 1,
+                    source_text=_source(node.start_point[0], node.end_point[0]),
+                    signature_text=_sig(node.start_point[0]),
+                    is_test=is_test,
+                ))
+
+        elif t == 'property_declaration':
+            pname = _cs_name_before(
+                node, {'accessor_list', 'arrow_expression_clause', 'block'}
+            )
+            if pname:
+                qualified = f"{class_name}.{pname}" if class_name else pname
+                symbols.append(Symbol(
+                    name=qualified,
+                    kind='method',
+                    file_path=file_path,
+                    start_line=node.start_point[0] + 1,
+                    end_line=node.end_point[0] + 1,
+                    source_text=_source(node.start_point[0], node.end_point[0]),
+                    signature_text=_sig(node.start_point[0]),
+                    is_test=is_test,
+                ))
+
+        else:
+            for child in node.children:
+                _walk(child, class_name)
+
+    _walk(tree.root_node)
+    return symbols
+
+
+_RAZOR_FUNCTIONS_RE = re.compile(r'@functions\s*(\{)', re.IGNORECASE)
+
+
+def _extract_brace_block(source: str, open_pos: int) -> tuple[str, int]:
+    """Extract content between matching braces starting at open_pos."""
+    depth = 0
+    pos = open_pos
+    while pos < len(source):
+        if source[pos] == '{':
+            depth += 1
+        elif source[pos] == '}':
+            depth -= 1
+            if depth == 0:
+                return source[open_pos + 1 : pos], pos
+        pos += 1
+    return source[open_pos + 1 :], len(source)
+
+
+def extract_symbols_razor(source: str, file_path: str, is_test: bool) -> list[Symbol]:
+    """Extract C# symbols from @functions { ... } blocks in Razor (.cshtml) files."""
+    symbols: list[Symbol] = []
+    for m in _RAZOR_FUNCTIONS_RE.finditer(source):
+        brace_pos = m.start(1)
+        line_offset = source[:brace_pos + 1].count('\n')
+        inner, _ = _extract_brace_block(source, brace_pos)
+        for sym in extract_symbols_csharp(inner, file_path, is_test):
+            symbols.append(Symbol(
+                name=sym.name,
+                kind=sym.kind,
+                file_path=sym.file_path,
+                start_line=sym.start_line + line_offset,
+                end_line=sym.end_line + line_offset,
+                source_text=sym.source_text,
+                signature_text=sym.signature_text,
+                is_test=sym.is_test,
+            ))
+    return symbols
+
+
 def iter_source_files(root: Path) -> Iterator[Path]:
     """Yield all source files under root, excluding EXCLUDE_DIRS and large files."""
     for path in root.rglob('*'):
@@ -211,7 +388,7 @@ def iter_source_files(root: Path) -> Iterator[Path]:
             continue
         if path.stat().st_size > EXCLUDE_SIZE:
             continue
-        if path.suffix in ('.py', '.ts', '.js', '.tsx', '.jsx'):
+        if path.suffix in ('.py', '.ts', '.js', '.tsx', '.jsx', '.cs', '.cshtml'):
             yield path
 
 
@@ -222,6 +399,10 @@ def _extract_file(path: Path, root: Path) -> list[Symbol]:
     test = is_test_file(path)
     if path.suffix == '.py':
         return extract_symbols_python(source, rel, test)
+    if path.suffix == '.cs':
+        return extract_symbols_csharp(source, rel, test)
+    if path.suffix == '.cshtml':
+        return extract_symbols_razor(source, rel, test)
     return extract_symbols_typescript(source, rel, test)
 
 
