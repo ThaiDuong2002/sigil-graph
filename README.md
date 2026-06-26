@@ -18,28 +18,42 @@ Symbex solves this by building a **symbol graph** from your codebase. Instead of
 
 ### Requirements
 
-Python 3.10+. No Node, no Docker.
+Python 3.10+, Git. No Node, no Docker.
 
-### macOS / Linux
+### macOS / Linux — one command
 
 ```bash
-git clone https://github.com/ThaiDuong2002/symbex-graph ~/Projects/symbex
-cd ~/Projects/symbex
-bash install.sh
-
-# Add to PATH (the script prints exact instructions)
-export PATH="$HOME/Projects/symbex/.venv/bin:$PATH"
+curl -sSL https://raw.githubusercontent.com/ThaiDuong2002/symbex-graph/master/install.sh | bash
 ```
 
-### Windows (PowerShell)
+The script clones the repo to `~/.symbex`, creates a virtualenv, and prints the exact `export PATH=...` line to add to your shell profile.
+
+### Windows — one command (PowerShell)
 
 ```powershell
-git clone https://github.com/ThaiDuong2002/symbex-graph $env:USERPROFILE\Projects\symbex
-cd $env:USERPROFILE\Projects\symbex
-.\install.ps1
-
-$env:PATH = "$env:USERPROFILE\Projects\symbex\.venv\Scripts;$env:PATH"
+irm https://raw.githubusercontent.com/ThaiDuong2002/symbex-graph/master/install.ps1 | iex
 ```
+
+Clones to `~\.symbex` and prints the `$env:PATH = ...` line to add to your PowerShell profile.
+
+### Custom install location
+
+```bash
+# macOS / Linux
+SYMBEX_DIR=~/tools/symbex curl -sSL .../install.sh | bash
+
+# Windows
+$env:SYMBEX_DIR = "C:\tools\symbex"
+irm .../install.ps1 | iex
+```
+
+### Alternative: pipx
+
+```bash
+pipx install git+https://github.com/ThaiDuong2002/symbex-graph.git
+```
+
+[pipx](https://pipx.pypa.io) installs into an isolated environment and adds `symbex` to your PATH automatically — no manual PATH editing needed.
 
 ### Verify
 
