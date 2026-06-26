@@ -10,7 +10,7 @@ When an AI agent needs to fix a function, it typically reads the entire containi
 
 Symbex solves this by building a **symbol graph** from your codebase. Instead of reading files, the agent calls `symbex_locate("fix login token")` and receives precisely the relevant functions — plus call-graph neighbors as signature-only stubs.
 
-**Supported languages:** Python (`.py`), TypeScript (`.ts`, `.tsx`), JavaScript (`.js`, `.jsx`).
+**Supported languages:** Python (`.py`), TypeScript (`.ts`, `.tsx`), JavaScript (`.js`, `.jsx`), C# (`.cs`), Razor (`.cshtml`).
 
 ---
 
@@ -59,7 +59,7 @@ pipx install git+https://github.com/ThaiDuong2002/symbex-graph.git
 
 ```bash
 symbex --version
-# symbex, version 0.2.0
+# symbex, version 0.3.0
 
 symbex --help
 ```
@@ -87,7 +87,7 @@ symbex init
 
 This does six things:
 
-1. **Index** — Parses all Python/TS/JS files into SQLite (`.symbex/symbex.db`). Automatically skips `node_modules`, `venv`, `dist`, and files over 500 KB.
+1. **Index** — Parses all Python/TS/JS/C#/Razor files into SQLite (`.symbex/symbex.db`). Automatically skips `node_modules`, `venv`, `dist`, `bin`, `obj`, and files over 500 KB.
 2. **Overview** — Writes `.symbex/overview.md` — a compact project summary.
 3. **Knowledge** — Writes `.symbex/knowledge.md` — architecture, business logic, conventions, and hotspots derived from the full symbol graph.
 4. **Agent policy** — Appends a guidance block to `CLAUDE.md`, `AGENTS.md`, and `GEMINI.md` so agents know to reach for Symbex before reading files.
@@ -349,6 +349,28 @@ This covers both cross-file calls (via import resolution) and same-file calls. R
 ### Incremental indexing
 
 Each file's SHA-256 hash is stored. Only files with a changed hash are re-parsed. After `git pull`, `symbex index` syncs in seconds regardless of project size.
+
+### Language support
+
+| Language | Extensions | Symbols extracted | Call graph |
+|---|---|---|---|
+| Python | `.py` | functions, classes, methods | Cross-file + same-file |
+| TypeScript | `.ts`, `.tsx` | functions, classes, methods | Cross-file + same-file |
+| JavaScript | `.js`, `.jsx` | functions, classes, methods | Cross-file + same-file |
+| C# | `.cs` | classes, interfaces, enums, structs, records, methods, constructors, properties | Same-file |
+| Razor | `.cshtml` | methods inside `@functions { }` blocks | Same-file |
+
+**C# notes:**
+- Methods are indexed as `ClassName.MethodName` — qualified by their containing class
+- ASP.NET attributes (`[HttpGet]`, `[Route]`, `[Authorize]`) are stripped from signatures; the declaration line is clean
+- `bin/`, `obj/`, `packages/` are excluded from indexing automatically
+- `*Tests.cs`, `*Test.cs` files are flagged as test files
+- Cross-namespace call edges are not tracked (would require Roslyn-level analysis)
+
+**Razor notes:**
+- Only `@functions { ... }` blocks are indexed — these contain indexable C# methods
+- Line numbers in results point back to the original `.cshtml` file
+- HTML template parts are ignored
 
 ---
 
