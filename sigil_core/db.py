@@ -32,7 +32,8 @@ def init_schema(conn: sqlite3.Connection) -> None:
             end_line       INTEGER NOT NULL,
             source_text    TEXT NOT NULL,
             signature_text TEXT NOT NULL,
-            is_test        INTEGER NOT NULL DEFAULT 0
+            is_test        INTEGER NOT NULL DEFAULT 0,
+            summary        TEXT NOT NULL DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS edges (
             caller_id  INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
@@ -44,6 +45,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
         CREATE VIRTUAL TABLE IF NOT EXISTS bm25_index USING fts5(
             name,
             signature_text,
+            summary,
             content=symbols,
             content_rowid=id
         );
@@ -55,11 +57,38 @@ def init_schema(conn: sqlite3.Connection) -> None:
 
 def migrate_schema(conn: sqlite3.Connection) -> None:
     """Add columns introduced after the initial schema without dropping data."""
-    existing = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
-    if 'call_count' not in existing:
+    existing_edges = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
+    if 'call_count' not in existing_edges:
         conn.execute("ALTER TABLE edges ADD COLUMN call_count INTEGER NOT NULL DEFAULT 1")
-    if 'call_sites' not in existing:
+    if 'call_sites' not in existing_edges:
         conn.execute("ALTER TABLE edges ADD COLUMN call_sites TEXT NOT NULL DEFAULT '[]'")
+
+    symbols_exists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='symbols'"
+    ).fetchone()
+    if symbols_exists:
+        existing_symbols = {row[1] for row in conn.execute("PRAGMA table_info(symbols)").fetchall()}
+        if 'summary' not in existing_symbols:
+            conn.execute("ALTER TABLE symbols ADD COLUMN summary TEXT NOT NULL DEFAULT ''")
+            # FTS5 content table must be dropped and recreated to expose new column
+            conn.execute("DROP TABLE IF EXISTS bm25_index")
+            conn.executescript("""
+                CREATE VIRTUAL TABLE bm25_index USING fts5(
+                    name,
+                    signature_text,
+                    summary,
+                    content=symbols,
+                    content_rowid=id
+                );
+            """)
+            conn.execute("INSERT INTO bm25_index(bm25_index) VALUES('rebuild')")
+
+    conn.commit()
+
+
+def rebuild_fts(conn: sqlite3.Connection) -> None:
+    """Rebuild FTS5 index from current symbols table (call after updating summaries)."""
+    conn.execute("INSERT INTO bm25_index(bm25_index) VALUES('rebuild')")
     conn.commit()
 
 

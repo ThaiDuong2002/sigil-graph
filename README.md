@@ -59,7 +59,7 @@ pipx install git+https://github.com/ThaiDuong2002/sigil-graph.git
 
 ```bash
 sigil --version
-# sigil, version 0.3.0
+# sigil, version 0.4.0
 
 sigil --help
 ```
@@ -122,6 +122,50 @@ Re-index changed files. Run after `git pull` or whenever the codebase changes. O
 ```bash
 sigil index
 # Indexed 3 symbols, 3 files, 2 edges
+```
+
+---
+
+### `sigil summarize`
+
+Generate AI-powered summaries for indexed symbols. Summaries are stored in the database and included in the BM25 search index, bridging the semantic gap between query terms and function names.
+
+**Why this matters:** A function called `create_session` won't appear when searching "auth" — unless its summary says "Handles user authentication and creates a JWT session token." After `sigil summarize`, semantic queries like "auth", "login flow", "token expiry" find functions that BM25 alone would miss.
+
+```bash
+sigil summarize           # auto-detect backend
+sigil summarize --backend ollama    # force Ollama
+sigil summarize --force             # re-summarize all symbols
+```
+
+**Backends (auto-detected in order):**
+
+| Backend | Setup | Cost |
+|---|---|---|
+| **LiteLLM** | `SIGIL_LLM_MODEL=gemini/gemini-2.0-flash-lite SIGIL_LLM_API_KEY=<key>` | API cost (~$0.001 per 100 symbols) |
+| **Ollama** | Install Ollama + `ollama pull qwen2.5:0.5b` | Free, local |
+
+LiteLLM supports any provider: `gemini/gemini-2.0-flash-lite`, `deepseek/deepseek-chat`, `anthropic/claude-haiku-4-5`, `openai/gpt-4o-mini`, `ollama/llama3.2`, etc.
+
+Via MCP (no CLI): `sigil_summarize()` uses the **host agent's model** (MCP Sampling) — zero config for Claude Code users.
+
+```bash
+# Install LiteLLM support
+pip install sigil[llm]
+
+# Gemini (cheapest)
+export SIGIL_LLM_MODEL=gemini/gemini-2.0-flash-lite
+export SIGIL_LLM_API_KEY=AIza...
+sigil summarize
+
+# DeepSeek
+export SIGIL_LLM_MODEL=deepseek/deepseek-chat
+export SIGIL_LLM_API_KEY=sk-...
+sigil summarize
+
+# Ollama (local, free)
+ollama pull qwen2.5:0.5b
+sigil summarize --backend ollama
 ```
 
 ---

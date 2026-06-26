@@ -2,14 +2,15 @@ import argparse
 import sqlite3
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Context
 
 from sigil_core.cache import QueryCache
-from sigil_core.db import get_db, init_schema
+from sigil_core.db import get_db, init_schema, rebuild_fts
 from sigil_core.graph import get_callers, get_callees, get_impact
 from sigil_core.indexer import index_project
 from sigil_core.knowledge import generate_knowledge
 from sigil_core.retrieval import SymbolResult, locate, search_bm25
+from sigil_core.summarizer import detect_backend, summarize, summarize_via_mcp
 
 mcp = FastMCP("sigil")
 
@@ -211,6 +212,62 @@ def sigil_knowledge() -> dict:
     """Return the full project knowledge document: architecture, business logic, conventions, hotspots."""
     text = generate_knowledge(_get_conn(), _root)
     return {"knowledge": text}
+
+
+@mcp.tool()
+async def sigil_summarize(ctx: Context, force: bool = False) -> dict:
+    """Generate AI summaries for indexed symbols to improve semantic search.
+
+    Uses MCP sampling (the host model) first, then falls back to Ollama or LiteLLM.
+    Call after sigil_index to enrich the BM25 index with semantic context.
+    Set force=True to re-summarize symbols that already have summaries.
+    """
+    conn = _get_conn()
+    query = (
+        "SELECT id, name, kind, source_text FROM symbols ORDER BY id"
+        if force else
+        "SELECT id, name, kind, source_text FROM symbols WHERE summary = '' ORDER BY id"
+    )
+    rows = conn.execute(query).fetchall()
+    total = len(rows)
+    if total == 0:
+        return {"summarized": 0, "message": "All symbols already summarized. Use force=True to redo."}
+
+    # Probe MCP sampling availability with a tiny request
+    mcp_sampling_ok = False
+    try:
+        probe = await summarize_via_mcp("probe", "function", "pass", ctx)
+        mcp_sampling_ok = bool(probe)
+    except Exception:
+        pass
+
+    fallback = detect_backend()
+
+    done = 0
+    failed = 0
+    for row in rows:
+        sym_id, name, kind, source_text = row[0], row[1], row[2], row[3]
+        summary = ""
+        if mcp_sampling_ok:
+            summary = await summarize_via_mcp(name, kind, source_text, ctx)
+        if not summary and fallback:
+            summary = summarize(name, kind, source_text, backend=fallback)
+        if summary:
+            conn.execute("UPDATE symbols SET summary=? WHERE id=?", (summary, sym_id))
+            conn.commit()
+            done += 1
+        else:
+            failed += 1
+
+    rebuild_fts(conn)
+    backend_used = "mcp_sampling" if mcp_sampling_ok else (fallback or "none")
+    return {
+        "summarized": done,
+        "failed": failed,
+        "total": total,
+        "backend": backend_used,
+        "message": f"Summarized {done}/{total} symbols via {backend_used}. FTS index rebuilt.",
+    }
 
 
 # ---------------------------------------------------------------------------

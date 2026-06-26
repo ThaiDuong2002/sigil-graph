@@ -46,6 +46,7 @@ class Symbol:
     source_text: str
     signature_text: str
     is_test: bool = False
+    summary: str = ''
 
 
 def file_hash(path: Path) -> str:

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sigil"
-version = "0.3.1"
+version = "0.4.0"
 requires-python = ">=3.10"
 dependencies = [
     "tree-sitter>=0.21",
@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-cov"]
+llm = ["litellm>=1.0"]
 
 [project.scripts]
 sigil = "sigil_cli.main:cli"

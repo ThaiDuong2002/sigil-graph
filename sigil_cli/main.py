@@ -5,7 +5,7 @@ from pathlib import Path
 
 import click
 
-from sigil_core.db import get_db, get_index_version, init_schema
+from sigil_core.db import get_db, get_index_version, init_schema, rebuild_fts
 from sigil_core.graph import get_callers, get_callees, get_impact
 from sigil_core.indexer import index_project
 from sigil_core.knowledge import write_knowledge
@@ -294,6 +294,77 @@ def update_cmd():
 
     click.echo(f"Updated: {old_sha} → {new_sha}")
     click.echo("Restart your shell to use the new version.")
+
+
+@cli.command("summarize")
+@click.option("--backend", default="auto", show_default=True,
+              type=click.Choice(["auto", "ollama", "litellm"]),
+              help="Summarization backend.")
+@click.option("--force", is_flag=True, default=False,
+              help="Re-summarize symbols that already have summaries.")
+@click.pass_context
+def summarize_cmd(ctx, backend, force):
+    """Generate AI summaries for symbols to improve semantic search.
+
+    Backends (auto-detected in order):
+      ollama   — local Ollama (localhost:11434), uses SIGIL_OLLAMA_MODEL env var
+      litellm  — any provider via LiteLLM: set SIGIL_LLM_MODEL + SIGIL_LLM_API_KEY
+
+    Examples:
+      sigil summarize                              # auto-detect
+      sigil summarize --backend ollama             # force Ollama
+      SIGIL_LLM_MODEL=gemini/gemini-2.0-flash-lite sigil summarize --backend litellm
+    """
+    from sigil_core.summarizer import detect_backend, summarize as _summarize
+
+    root = ctx.obj["root"]
+    conn = _open_db(root)
+
+    resolved = backend if backend != "auto" else detect_backend()
+    if resolved is None:
+        click.echo(
+            "No summarization backend available. Configure one of:\n"
+            "  • Ollama:  install Ollama, then: ollama pull qwen2.5:0.5b\n"
+            "  • Any LLM: set SIGIL_LLM_MODEL=<provider/model> "
+            "and SIGIL_LLM_API_KEY=<key>\n"
+            "    Examples: gemini/gemini-2.0-flash-lite  deepseek/deepseek-chat  "
+            "anthropic/claude-haiku-4-5"
+        )
+        sys.exit(1)
+
+    click.echo(f"Backend: {resolved}")
+
+    query = (
+        "SELECT id, name, kind, source_text FROM symbols ORDER BY id"
+        if force else
+        "SELECT id, name, kind, source_text FROM symbols WHERE summary = '' ORDER BY id"
+    )
+    rows = conn.execute(query).fetchall()
+    total = len(rows)
+    if total == 0:
+        click.echo("All symbols already summarized. Use --force to redo.")
+        return
+
+    click.echo(f"Summarizing {total} symbols...")
+    done = 0
+    failed = 0
+    for i, row in enumerate(rows, 1):
+        sym_id, name, kind, source_text = row[0], row[1], row[2], row[3]
+        summary = _summarize(name, kind, source_text, backend=resolved)
+        if summary:
+            conn.execute("UPDATE symbols SET summary=? WHERE id=?", (summary, sym_id))
+            conn.commit()
+            done += 1
+        else:
+            failed += 1
+        click.echo(f"  [{i}/{total}] {name}")
+
+    rebuild_fts(conn)
+    msg = f"Done. Summarized {done}/{total} symbols."
+    if failed:
+        msg += f" ({failed} failed — check backend availability)"
+    click.echo(msg)
+    click.echo("FTS index rebuilt — semantic search is now enriched.")
 
 
 from sigil_cli.init import init_cmd
