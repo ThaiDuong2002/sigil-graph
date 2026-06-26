@@ -2,7 +2,7 @@ import ast
 import re
 from pathlib import Path
 
-from symbex_core.indexer import Symbol
+from sigil_core.indexer import Symbol
 
 # (caller_name, callee_name, call_count, call_sites)
 EdgeData = tuple[str, str, int, list[int]]

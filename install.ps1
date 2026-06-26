@@ -1,17 +1,17 @@
-# Install symbex from anywhere — no prior clone needed.
+# Install sigil from anywhere — no prior clone needed.
 #
 # Quick install (run in PowerShell):
-#   irm https://raw.githubusercontent.com/ThaiDuong2002/symbex-graph/master/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/ThaiDuong2002/sigil-graph/master/install.ps1 | iex
 #
 # Custom install location:
-#   $env:SYMBEX_DIR = "C:\tools\symbex"
-#   irm https://raw.githubusercontent.com/ThaiDuong2002/symbex-graph/master/install.ps1 | iex
+#   $env:SIGIL_DIR = "C:\tools\sigil"
+#   irm https://raw.githubusercontent.com/ThaiDuong2002/sigil-graph/master/install.ps1 | iex
 
 $ErrorActionPreference = "Stop"
 
 $Python     = if ($env:PYTHON)     { $env:PYTHON }     else { "python" }
-$RepoUrl    = "https://github.com/ThaiDuong2002/symbex-graph.git"
-$InstallDir = if ($env:SYMBEX_DIR) { $env:SYMBEX_DIR } else { Join-Path $env:USERPROFILE ".symbex" }
+$RepoUrl    = "https://github.com/ThaiDuong2002/sigil-graph.git"
+$InstallDir = if ($env:SIGIL_DIR) { $env:SIGIL_DIR } else { Join-Path $env:USERPROFILE ".sigil" }
 $MinMinor   = 10
 
 # ── Verify Python ──────────────────────────────────────────────────────────
@@ -28,10 +28,10 @@ if ([int]$pyMinor -lt $MinMinor) {
 
 # ── Clone or update repo ───────────────────────────────────────────────────
 if (Test-Path (Join-Path $InstallDir ".git")) {
-    Write-Host "Updating symbex at $InstallDir..."
+    Write-Host "Updating sigil at $InstallDir..."
     git -C $InstallDir pull --quiet
 } else {
-    Write-Host "Installing symbex to $InstallDir..."
+    Write-Host "Installing sigil to $InstallDir..."
     git clone --quiet $RepoUrl $InstallDir
 }
 
@@ -46,10 +46,10 @@ if (-not (Test-Path $Venv)) {
 
 # ── Done ───────────────────────────────────────────────────────────────────
 Write-Host ""
-Write-Host "Symbex installed at $InstallDir"
+Write-Host "Sigil installed at $InstallDir"
 Write-Host ""
 Write-Host "Add to your PATH (paste into your PowerShell profile):"
 Write-Host "  `$env:PATH = `"$Venv\Scripts;`$env:PATH`""
 Write-Host ""
 Write-Host "Then index any project:"
-Write-Host "  cd C:\your-project; symbex init"
+Write-Host "  cd C:\your-project; sigil init"

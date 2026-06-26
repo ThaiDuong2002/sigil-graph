@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 
-_DB_SUBPATH = ".symbex/symbex.db"
+_DB_SUBPATH = ".sigil/sigil.db"
 
 def get_db(root: Path) -> sqlite3.Connection:
     db_path = root / _DB_SUBPATH

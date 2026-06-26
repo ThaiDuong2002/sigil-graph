@@ -1,8 +1,8 @@
 import sqlite3
 from pathlib import Path
 import tree_sitter_typescript  # noqa: import check
-from symbex_core.indexer import Symbol, extract_symbols_python, extract_symbols_typescript, index_project, iter_source_files
-from symbex_core.db import get_db, init_schema, get_index_version
+from sigil_core.indexer import Symbol, extract_symbols_python, extract_symbols_typescript, index_project, iter_source_files
+from sigil_core.db import get_db, init_schema, get_index_version
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample.py"
 FIXTURE_TS = Path(__file__).parent / "fixtures" / "sample.ts"

@@ -1,7 +1,7 @@
 from collections import OrderedDict
 import sqlite3
-from symbex_core.db import get_index_version
-from symbex_core.retrieval import SymbolResult
+from sigil_core.db import get_index_version
+from sigil_core.retrieval import SymbolResult
 
 
 class QueryCache:

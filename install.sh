@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Install symbex from anywhere — no prior clone needed.
+# Install sigil from anywhere — no prior clone needed.
 #
 # Quick install:
-#   curl -sSL https://raw.githubusercontent.com/ThaiDuong2002/symbex-graph/master/install.sh | bash
+#   curl -sSL https://raw.githubusercontent.com/ThaiDuong2002/sigil-graph/master/install.sh | bash
 #
 # Custom install location:
-#   SYMBEX_DIR=~/tools/symbex curl -sSL ... | bash
+#   SIGIL_DIR=~/tools/sigil curl -sSL ... | bash
 
 set -euo pipefail
 
 PYTHON=${PYTHON:-python3}
-REPO_URL="https://github.com/ThaiDuong2002/symbex-graph.git"
-INSTALL_DIR="${SYMBEX_DIR:-$HOME/.symbex}"
+REPO_URL="https://github.com/ThaiDuong2002/sigil-graph.git"
+INSTALL_DIR="${SIGIL_DIR:-$HOME/.sigil}"
 MIN_MINOR=10
 
 # ── Verify Python ──────────────────────────────────────────────────────────
@@ -26,10 +26,10 @@ fi
 
 # ── Clone or update repo ───────────────────────────────────────────────────
 if [ -d "$INSTALL_DIR/.git" ]; then
-  echo "Updating symbex at $INSTALL_DIR..."
+  echo "Updating sigil at $INSTALL_DIR..."
   git -C "$INSTALL_DIR" pull --quiet
 else
-  echo "Installing symbex to $INSTALL_DIR..."
+  echo "Installing sigil to $INSTALL_DIR..."
   git clone --quiet "$REPO_URL" "$INSTALL_DIR"
 fi
 
@@ -44,10 +44,10 @@ fi
 
 # ── Done ───────────────────────────────────────────────────────────────────
 echo ""
-echo "Symbex installed at $INSTALL_DIR"
+echo "Sigil installed at $INSTALL_DIR"
 echo ""
 echo "Add to your shell profile (~/.bashrc or ~/.zshrc):"
 echo "  export PATH=\"$VENV/bin:\$PATH\""
 echo ""
 echo "Then index any project:"
-echo "  cd ~/your-project && symbex init"
+echo "  cd ~/your-project && sigil init"

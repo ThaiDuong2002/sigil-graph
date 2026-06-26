@@ -25,7 +25,7 @@ _CS_PARSER = Parser(_CS_LANG)
 
 EXCLUDE_DIRS = frozenset({
     'node_modules', 'venv', '.venv', 'env', '.env',
-    'dist', 'build', '__pycache__', '.git', '.symbex',
+    'dist', 'build', '__pycache__', '.git', '.sigil',
     'bin', 'obj', 'packages',  # .NET build artefacts
 })
 EXCLUDE_SIZE = 500 * 1024
@@ -447,8 +447,8 @@ def _upsert_file(path: Path, root: Path, conn: sqlite3.Connection) -> list[Symbo
 
 def index_project(root: Path, conn: sqlite3.Connection) -> dict:
     """Index all source files in root incrementally. Returns stats dict."""
-    from symbex_core.db import bump_index_version
-    from symbex_core.import_resolver import resolve_edges
+    from sigil_core.db import bump_index_version
+    from sigil_core.import_resolver import resolve_edges
 
     changed_files: list[Path] = []
     total_symbols = 0

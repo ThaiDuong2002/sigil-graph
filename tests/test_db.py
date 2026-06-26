@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 import pytest
-from symbex_core.db import get_db, init_schema, migrate_schema, get_index_version, bump_index_version
+from sigil_core.db import get_db, init_schema, migrate_schema, get_index_version, bump_index_version
 
 def test_init_schema_creates_tables(tmp_path):
     conn = get_db(tmp_path)
@@ -56,4 +56,4 @@ def test_get_db_creates_directory(tmp_path):
     root = tmp_path / "project"
     root.mkdir()
     conn = get_db(root)
-    assert (root / ".symbex" / "symbex.db").exists()
+    assert (root / ".sigil" / "sigil.db").exists()

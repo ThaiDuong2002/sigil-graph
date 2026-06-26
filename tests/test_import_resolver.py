@@ -1,5 +1,5 @@
 from pathlib import Path
-from symbex_core.import_resolver import extract_python_imports, extract_typescript_imports
+from sigil_core.import_resolver import extract_python_imports, extract_typescript_imports
 
 CALLER = Path(__file__).parent / "fixtures" / "caller.py"
 

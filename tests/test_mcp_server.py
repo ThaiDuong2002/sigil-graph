@@ -1,8 +1,8 @@
 import pytest
 from pathlib import Path
-from symbex_core.db import get_db, init_schema
-from symbex_core.indexer import index_project
-from symbex_mcp.server import (
+from sigil_core.db import get_db, init_schema
+from sigil_core.indexer import index_project
+from sigil_mcp.server import (
     _result_to_dict,
     _locate_symbols,
     _get_symbol,

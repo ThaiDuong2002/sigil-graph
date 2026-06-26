@@ -1,14 +1,14 @@
-# Symbex
+# Sigil
 
 Symbol-graph retrieval for AI agents — returns exactly the functions needed, not entire files.
 
 ---
 
-## What is Symbex?
+## What is Sigil?
 
 When an AI agent needs to fix a function, it typically reads the entire containing file — 400 lines instead of the 25 that matter. If that function calls into another file, the agent jumps there and reads that one too.
 
-Symbex solves this by building a **symbol graph** from your codebase. Instead of reading files, the agent calls `symbex_locate("fix login token")` and receives precisely the relevant functions — plus call-graph neighbors as signature-only stubs.
+Sigil solves this by building a **symbol graph** from your codebase. Instead of reading files, the agent calls `sigil_locate("fix login token")` and receives precisely the relevant functions — plus call-graph neighbors as signature-only stubs.
 
 **Supported languages:** Python (`.py`), TypeScript (`.ts`, `.tsx`), JavaScript (`.js`, `.jsx`), C# (`.cs`), Razor (`.cshtml`).
 
@@ -23,55 +23,55 @@ Python 3.10+, Git. No Node, no Docker.
 ### macOS / Linux — one command
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/ThaiDuong2002/symbex-graph/master/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/ThaiDuong2002/sigil-graph/master/install.sh | bash
 ```
 
-The script clones the repo to `~/.symbex`, creates a virtualenv, and prints the exact `export PATH=...` line to add to your shell profile.
+The script clones the repo to `~/.sigil`, creates a virtualenv, and prints the exact `export PATH=...` line to add to your shell profile.
 
 ### Windows — one command (PowerShell)
 
 ```powershell
-irm https://raw.githubusercontent.com/ThaiDuong2002/symbex-graph/master/install.ps1 | iex
+irm https://raw.githubusercontent.com/ThaiDuong2002/sigil-graph/master/install.ps1 | iex
 ```
 
-Clones to `~\.symbex` and prints the `$env:PATH = ...` line to add to your PowerShell profile.
+Clones to `~\.sigil` and prints the `$env:PATH = ...` line to add to your PowerShell profile.
 
 ### Custom install location
 
 ```bash
 # macOS / Linux
-SYMBEX_DIR=~/tools/symbex curl -sSL .../install.sh | bash
+SIGIL_DIR=~/tools/sigil curl -sSL .../install.sh | bash
 
 # Windows
-$env:SYMBEX_DIR = "C:\tools\symbex"
+$env:SIGIL_DIR = "C:\tools\sigil"
 irm .../install.ps1 | iex
 ```
 
 ### Alternative: pipx
 
 ```bash
-pipx install git+https://github.com/ThaiDuong2002/symbex-graph.git
+pipx install git+https://github.com/ThaiDuong2002/sigil-graph.git
 ```
 
-[pipx](https://pipx.pypa.io) installs into an isolated environment and adds `symbex` to your PATH automatically — no manual PATH editing needed.
+[pipx](https://pipx.pypa.io) installs into an isolated environment and adds `sigil` to your PATH automatically — no manual PATH editing needed.
 
 ### Verify
 
 ```bash
-symbex --version
-# symbex, version 0.3.0
+sigil --version
+# sigil, version 0.3.0
 
-symbex --help
+sigil --help
 ```
 
 ### Updating
 
 ```bash
 # Git-based installs (install.sh / install.ps1)
-symbex update
+sigil update
 
 # pipx installs
-pipx upgrade symbex-graph
+pipx upgrade sigil-graph
 ```
 
 ---
@@ -82,23 +82,23 @@ Run one command at the root of the project you want to index:
 
 ```bash
 cd ~/Projects/my-app
-symbex init
+sigil init
 ```
 
 This does six things:
 
-1. **Index** — Parses all Python/TS/JS/C#/Razor files into SQLite (`.symbex/symbex.db`). Automatically skips `node_modules`, `venv`, `dist`, `bin`, `obj`, and files over 500 KB.
-2. **Overview** — Writes `.symbex/overview.md` — a compact project summary.
-3. **Knowledge** — Writes `.symbex/knowledge.md` — architecture, business logic, conventions, and hotspots derived from the full symbol graph.
-4. **Agent policy** — Appends a guidance block to `CLAUDE.md`, `AGENTS.md`, and `GEMINI.md` so agents know to reach for Symbex before reading files.
-5. **Global policy** — Writes a trigger-based rule to `~/.claude/CLAUDE.md` and `~/.agents/AGENTS.md` so agents use Symbex automatically in any indexed repo, without being told per session.
+1. **Index** — Parses all Python/TS/JS/C#/Razor files into SQLite (`.sigil/sigil.db`). Automatically skips `node_modules`, `venv`, `dist`, `bin`, `obj`, and files over 500 KB.
+2. **Overview** — Writes `.sigil/overview.md` — a compact project summary.
+3. **Knowledge** — Writes `.sigil/knowledge.md` — architecture, business logic, conventions, and hotspots derived from the full symbol graph.
+4. **Agent policy** — Appends a guidance block to `CLAUDE.md`, `AGENTS.md`, and `GEMINI.md` so agents know to reach for Sigil before reading files.
+5. **Global policy** — Writes a trigger-based rule to `~/.claude/CLAUDE.md` and `~/.agents/AGENTS.md` so agents use Sigil automatically in any indexed repo, without being told per session.
 6. **MCP registration** — Writes to `.mcp.json` (Claude Code) and `~/.gemini/config/mcp_config.json` (Gemini/Antigravity). Restart your agent IDE to load.
 
 ```
 Indexing project...
 Indexed 142 symbols, 23 files, 89 edges
-Overview written to .symbex/overview.md
-Project knowledge written to .symbex/knowledge.md
+Overview written to .sigil/overview.md
+Project knowledge written to .sigil/knowledge.md
 Agent policy written to CLAUDE.md
 Agent policy written to AGENTS.md
 Agent policy written to GEMINI.md
@@ -113,25 +113,25 @@ Done. Restart your agent IDE to load the MCP server.
 
 ## Command Reference
 
-All commands accept `--root PATH` to specify a project root (defaults to the current directory). Run `symbex --version` to check the installed version.
+All commands accept `--root PATH` to specify a project root (defaults to the current directory). Run `sigil --version` to check the installed version.
 
-### `symbex index`
+### `sigil index`
 
 Re-index changed files. Run after `git pull` or whenever the codebase changes. Only files whose SHA-256 hash has changed are re-parsed.
 
 ```bash
-symbex index
+sigil index
 # Indexed 3 symbols, 3 files, 2 edges
 ```
 
 ---
 
-### `symbex locate <task>`
+### `sigil locate <task>`
 
 The core command. Uses BM25 search + call-graph expansion + token-aware trimming to return the minimal set of symbols within a token budget. Frequently-called symbols are boosted in ranking so central functions surface even with imprecise queries.
 
 ```bash
-symbex locate "fix login token" --budget 2000
+sigil locate "fix login token" --budget 2000
 
 # auth.py:12-45  login  (function, 180 tokens)
 # def login(user: str, password: str) -> str:
@@ -150,12 +150,12 @@ symbex locate "fix login token" --budget 2000
 
 ---
 
-### `symbex symbol <name>`
+### `sigil symbol <name>`
 
 View the full source of a function or class. Replaces manually opening a file and searching.
 
 ```bash
-symbex symbol "refresh_token"
+sigil symbol "refresh_token"
 
 # tokens.py:8-32  refresh_token  (function)
 # def refresh_token(user_id: int, token: str) -> str:
@@ -167,12 +167,12 @@ symbex symbol "refresh_token"
 
 ---
 
-### `symbex callers <name>`
+### `sigil callers <name>`
 
 Who calls this function, how many times, and from which lines?
 
 ```bash
-symbex callers "refresh_token"
+sigil callers "refresh_token"
 
 # Callers of 'refresh_token' (2):
 #   api.py:34  api_refresh  (function, 2x)
@@ -188,12 +188,12 @@ Results are sorted by call count descending — the heaviest caller appears firs
 
 ---
 
-### `symbex callees <name>`
+### `sigil callees <name>`
 
 What does this function call, how many times, and from which lines?
 
 ```bash
-symbex callees "login"
+sigil callees "login"
 
 # Callees of 'login' (2):
 #   auth.py:12  validate_user  (function, 1x)
@@ -209,12 +209,12 @@ Tracks both cross-file calls (via imports) and same-file calls.
 
 ---
 
-### `symbex impact <name>`
+### `sigil impact <name>`
 
 What breaks if this function changes? Use before refactoring or changing a signature.
 
 ```bash
-symbex impact "refresh_token"
+sigil impact "refresh_token"
 
 # 'refresh_token' affects 3 callers:
 #   api.py:34     api_refresh  (2x)  lines: 41, 67
@@ -224,13 +224,13 @@ symbex impact "refresh_token"
 
 ---
 
-### `symbex knowledge`
+### `sigil knowledge`
 
-Generate `.symbex/knowledge.md` — a static-analysis document that gives an AI agent a complete picture of the project before it reads a single source file.
+Generate `.sigil/knowledge.md` — a static-analysis document that gives an AI agent a complete picture of the project before it reads a single source file.
 
 ```bash
-symbex knowledge
-# Project knowledge written to .symbex/knowledge.md
+sigil knowledge
+# Project knowledge written to .sigil/knowledge.md
 ```
 
 The generated file has four sections:
@@ -242,31 +242,31 @@ The generated file has four sections:
 | **Conventions** | Naming style, type-hint coverage %, docstring coverage %, common prefixes (`get_*`, `validate_*`...), architectural class suffixes (`*Service`, `*Repository`...) |
 | **Hotspots** | Largest functions by line count, test coverage map |
 
-Also generated automatically by `symbex init`.
+Also generated automatically by `sigil init`.
 
 ---
 
-### `symbex update`
+### `sigil update`
 
 Pull the latest version from GitHub and reinstall. Only works for git-based installs (`install.sh` / `install.ps1`).
 
 ```bash
-symbex update
-# Updating symbex at ~/.symbex ...
+sigil update
+# Updating sigil at ~/.sigil ...
 # Updated: a1b2c3d → e4f5a6b
 # Restart your shell to use the new version.
 ```
 
-For pipx installs: `pipx upgrade symbex-graph`
+For pipx installs: `pipx upgrade sigil-graph`
 
 ---
 
-### `symbex preview <task>`
+### `sigil preview <task>`
 
 Estimate token cost before loading anything. Useful for staying within budget.
 
 ```bash
-symbex preview "fix login"
+sigil preview "fix login"
 
 # Symbol preview (token costs):
 #   login         function  auth.py:12    ~180 tokens
@@ -278,12 +278,12 @@ symbex preview "fix login"
 
 ---
 
-### `symbex tests <name>`
+### `sigil tests <name>`
 
 Find which tests cover a function.
 
 ```bash
-symbex tests "refresh_token"
+sigil tests "refresh_token"
 
 # Test symbols referencing 'refresh_token' (2):
 #   auth_test.py:12-25  test_refresh_ok      (function)
@@ -292,14 +292,14 @@ symbex tests "refresh_token"
 
 ---
 
-### `symbex status`
+### `sigil status`
 
 Show current index stats.
 
 ```bash
-symbex status
+sigil status
 
-# Index:    .symbex/symbex.db
+# Index:    .sigil/sigil.db
 # Symbols:  142
 # Files:    23
 # Edges:    89
@@ -312,7 +312,7 @@ symbex status
 
 Token counts estimated using `len(text) / 4` — consistent with major LLM tokenizers.
 
-| Scenario | Without Symbex | With Symbex | Savings |
+| Scenario | Without Sigil | With Sigil | Savings |
 |---|---|---|---|
 | Fix bug in `refresh_token()` — reads auth.py (~400 lines) | ~1,600 tokens | ~100 tokens | **−94%** |
 | Trace why `TokenExpiredError` appears — 3 related files | ~4,000 tokens | ~400 tokens | **−90%** |
@@ -320,7 +320,7 @@ Token counts estimated using `len(text) / 4` — consistent with major LLM token
 | Refactor a class with 5 callers — grep + read each file | ~8,000 tokens | ~50 tokens | **−99%** |
 | Add tests for `login()` — need current tests + source | ~2,400 tokens | ~280 tokens | **−88%** |
 
-**Why such large savings?** Without Symbex, an agent reads the full file even when it only needs one function. If that function calls into another file, the agent reads that file too. Symbex breaks the chain — returning only the function's source span, with dependency functions as signatures.
+**Why such large savings?** Without Sigil, an agent reads the full file even when it only needs one function. If that function calls into another file, the agent reads that file too. Sigil breaks the chain — returning only the function's source span, with dependency functions as signatures.
 
 ---
 
@@ -328,7 +328,7 @@ Token counts estimated using `len(text) / 4` — consistent with major LLM token
 
 ### Locate pipeline
 
-Each call to `symbex locate` (CLI) or `symbex_locate` (MCP tool) runs the same pipeline:
+Each call to `sigil locate` (CLI) or `sigil_locate` (MCP tool) runs the same pipeline:
 
 ```
 BM25 Search  →  Call-count boost  →  Call Graph  →  Token Trim  →  Cache
@@ -348,7 +348,7 @@ This covers both cross-file calls (via import resolution) and same-file calls. R
 
 ### Incremental indexing
 
-Each file's SHA-256 hash is stored. Only files with a changed hash are re-parsed. After `git pull`, `symbex index` syncs in seconds regardless of project size.
+Each file's SHA-256 hash is stored. Only files with a changed hash are re-parsed. After `git pull`, `sigil index` syncs in seconds regardless of project size.
 
 ### Language support
 
@@ -378,7 +378,7 @@ Each file's SHA-256 hash is stored. Only files with a changed hash are re-parsed
 
 ```bash
 git pull
-symbex index
+sigil index
 # Indexed 8 symbols, 3 files, 5 edges
 ```
 
@@ -388,19 +388,19 @@ Unchanged files are skipped entirely regardless of project size.
 
 ## Agent Integration
 
-After `symbex init`, agents receive two layers of guidance:
+After `sigil init`, agents receive two layers of guidance:
 
 **Per-project** (`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`):
 
 | Instead of | Use |
 |---|---|
-| Grep + Read to find code | `symbex_locate("<task>")` |
-| Read to view a function | `symbex_symbol("<name>")` |
-| Grep to find callers | `symbex_callers("<name>")` |
-| Grep to find callees | `symbex_callees("<name>")` |
-| Guessing what breaks | `symbex_impact("<name>")` before any edit |
-| Reading files for project context | `symbex_knowledge()` at start of task |
+| Grep + Read to find code | `sigil_locate("<task>")` |
+| Read to view a function | `sigil_symbol("<name>")` |
+| Grep to find callers | `sigil_callers("<name>")` |
+| Grep to find callees | `sigil_callees("<name>")` |
+| Guessing what breaks | `sigil_impact("<name>")` before any edit |
+| Reading files for project context | `sigil_knowledge()` at start of task |
 
 **Global** (`~/.claude/CLAUDE.md` / `~/.agents/AGENTS.md`):
 
-A trigger-based rule that fires automatically in any repo with a `.symbex/` directory — no per-session instructions needed.
+A trigger-based rule that fires automatically in any repo with a `.sigil/` directory — no per-session instructions needed.

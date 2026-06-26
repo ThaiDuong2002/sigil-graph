@@ -4,14 +4,14 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from symbex_core.cache import QueryCache
-from symbex_core.db import get_db, init_schema
-from symbex_core.graph import get_callers, get_callees, get_impact
-from symbex_core.indexer import index_project
-from symbex_core.knowledge import generate_knowledge
-from symbex_core.retrieval import SymbolResult, locate, search_bm25
+from sigil_core.cache import QueryCache
+from sigil_core.db import get_db, init_schema
+from sigil_core.graph import get_callers, get_callees, get_impact
+from sigil_core.indexer import index_project
+from sigil_core.knowledge import generate_knowledge
+from sigil_core.retrieval import SymbolResult, locate, search_bm25
 
-mcp = FastMCP("symbex")
+mcp = FastMCP("sigil")
 
 _root: Path = Path.cwd()
 _conn: sqlite3.Connection | None = None
@@ -158,56 +158,56 @@ def _get_tests(conn: sqlite3.Connection, name: str) -> dict:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def symbex_locate(task: str, budget: int = 2000) -> dict:
+def sigil_locate(task: str, budget: int = 2000) -> dict:
     """Find the minimal set of symbols relevant to a task within a token budget."""
     return _locate_symbols(_get_conn(), task, budget, _cache)
 
 
 @mcp.tool()
-def symbex_symbol(name: str) -> dict:
+def sigil_symbol(name: str) -> dict:
     """Return the full source span of a named symbol."""
     return _get_symbol(_get_conn(), name)
 
 
 @mcp.tool()
-def symbex_callers(name: str, depth: int = 1) -> dict:
+def sigil_callers(name: str, depth: int = 1) -> dict:
     """Return all symbols that call the named symbol."""
     return _get_callers_result(_get_conn(), name, depth)
 
 
 @mcp.tool()
-def symbex_callees(name: str, depth: int = 1) -> dict:
+def sigil_callees(name: str, depth: int = 1) -> dict:
     """Return all symbols called by the named symbol."""
     return _get_callees_result(_get_conn(), name, depth)
 
 
 @mcp.tool()
-def symbex_preview(task: str) -> dict:
+def sigil_preview(task: str) -> dict:
     """Return token cost estimates per symbol without loading full source."""
     return _preview_symbols(_get_conn(), task)
 
 
 @mcp.tool()
-def symbex_impact(name: str) -> dict:
+def sigil_impact(name: str) -> dict:
     """Return the count and list of callers affected by changing this symbol."""
     return _get_impact_result(_get_conn(), name)
 
 
 @mcp.tool()
-def symbex_index(path: str = ".") -> dict:
+def sigil_index(path: str = ".") -> dict:
     """Rebuild the symbol index for the given project path."""
     root = Path(path).resolve() if path != "." else _root
     return _run_index(root)
 
 
 @mcp.tool()
-def symbex_tests(name: str) -> dict:
+def sigil_tests(name: str) -> dict:
     """Return test symbols whose source references the named symbol."""
     return _get_tests(_get_conn(), name)
 
 
 @mcp.tool()
-def symbex_knowledge() -> dict:
+def sigil_knowledge() -> dict:
     """Return the full project knowledge document: architecture, business logic, conventions, hotspots."""
     text = generate_knowledge(_get_conn(), _root)
     return {"knowledge": text}
@@ -219,7 +219,7 @@ def symbex_knowledge() -> dict:
 
 def main() -> None:
     global _root
-    parser = argparse.ArgumentParser(description="Symbex MCP server")
+    parser = argparse.ArgumentParser(description="Sigil MCP server")
     parser.add_argument("--root", type=Path, default=Path.cwd())
     args, _ = parser.parse_known_args()
     _root = args.root.resolve()

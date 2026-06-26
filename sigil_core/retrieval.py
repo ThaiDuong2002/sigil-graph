@@ -87,9 +87,9 @@ def locate(
     cache=None,
 ) -> list[SymbolResult]:
     """Find the minimal set of symbols relevant to `task` within `budget` tokens."""
-    from symbex_core.db import get_index_version
-    from symbex_core.graph import get_callees
-    from symbex_core.trimmer import trim_to_budget
+    from sigil_core.db import get_index_version
+    from sigil_core.graph import get_callees
+    from sigil_core.trimmer import trim_to_budget
 
     version = get_index_version(conn)
     cache_key = (task, version)

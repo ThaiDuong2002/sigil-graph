@@ -1,6 +1,6 @@
-from symbex_core.retrieval import SymbolResult
-from symbex_core.trimmer import trim_to_budget
-from symbex_core.cache import QueryCache
+from sigil_core.retrieval import SymbolResult
+from sigil_core.trimmer import trim_to_budget
+from sigil_core.cache import QueryCache
 
 
 def _make_result(name: str, tokens: int, score: float = 1.0) -> SymbolResult:
@@ -63,7 +63,7 @@ def test_cache_lru_eviction():
 
 
 def test_cache_stale_after_version_bump(tmp_path):
-    from symbex_core.db import get_db, init_schema, bump_index_version
+    from sigil_core.db import get_db, init_schema, bump_index_version
     conn = get_db(tmp_path)
     init_schema(conn)
     cache = QueryCache(max_size=10)

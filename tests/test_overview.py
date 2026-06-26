@@ -1,7 +1,7 @@
 from pathlib import Path
-from symbex_core.db import get_db, init_schema
-from symbex_core.indexer import index_project
-from symbex_core.overview import generate_overview
+from sigil_core.db import get_db, init_schema
+from sigil_core.indexer import index_project
+from sigil_core.overview import generate_overview
 
 
 def test_overview_contains_symbol_names(tmp_path):

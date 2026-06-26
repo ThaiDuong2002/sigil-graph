@@ -1,4 +1,4 @@
-from symbex_core.retrieval import SymbolResult
+from sigil_core.retrieval import SymbolResult
 
 
 def trim_to_budget(results: list[SymbolResult], budget: int) -> list[SymbolResult]:

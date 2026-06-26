@@ -1,7 +1,7 @@
 from pathlib import Path
-from symbex_core.db import get_db, init_schema
-from symbex_core.indexer import index_project
-from symbex_core.knowledge import (
+from sigil_core.db import get_db, init_schema
+from sigil_core.indexer import index_project
+from sigil_core.knowledge import (
     generate_knowledge,
     write_knowledge,
     _extract_docstring,

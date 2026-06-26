@@ -1,7 +1,7 @@
 from pathlib import Path
-from symbex_core.db import get_db, init_schema
-from symbex_core.indexer import index_project
-from symbex_core.graph import get_callers, get_callees, get_impact
+from sigil_core.db import get_db, init_schema
+from sigil_core.indexer import index_project
+from sigil_core.graph import get_callers, get_callees, get_impact
 
 
 def _setup_graph(tmp_path: Path):

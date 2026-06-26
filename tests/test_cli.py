@@ -1,9 +1,9 @@
 import pytest
 from click.testing import CliRunner
 from pathlib import Path
-from symbex_core.db import get_db, init_schema
-from symbex_core.indexer import index_project
-from symbex_cli.main import cli
+from sigil_core.db import get_db, init_schema
+from sigil_core.indexer import index_project
+from sigil_cli.main import cli
 
 
 @pytest.fixture
@@ -108,14 +108,14 @@ def test_version_flag():
     runner = CliRunner()
     result = runner.invoke(cli, ["--version"])
     assert result.exit_code == 0
-    assert "symbex" in result.output
+    assert "sigil" in result.output
     # Should contain a version string like "0.2.0" or "dev"
     assert any(c.isdigit() or result.output.strip().endswith("dev") for c in result.output)
 
 
 def test_update_not_git_install(monkeypatch):
     """update exits with error when not a git-based editable install."""
-    from symbex_cli import main as cli_main
+    from sigil_cli import main as cli_main
     monkeypatch.setattr(cli_main, "_find_install_dir", lambda: None)
     runner = CliRunner()
     result = runner.invoke(cli, ["update"])

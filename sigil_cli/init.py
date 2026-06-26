@@ -4,48 +4,48 @@ from pathlib import Path
 
 import click
 
-from symbex_core.db import get_db, init_schema
-from symbex_core.indexer import index_project
-from symbex_core.knowledge import write_knowledge
-from symbex_core.overview import write_overview
+from sigil_core.db import get_db, init_schema
+from sigil_core.indexer import index_project
+from sigil_core.knowledge import write_knowledge
+from sigil_core.overview import write_overview
 
-_START = "<!-- symbex-start -->"
-_END = "<!-- symbex-end -->"
+_START = "<!-- sigil-start -->"
+_END = "<!-- sigil-end -->"
 
 _AGENT_POLICY = """\
-## Symbex — Symbol-graph retrieval
+## Sigil — Symbol-graph retrieval
 
-This project is indexed by Symbex (`.symbex/` exists). Use Symbex MCP tools
+This project is indexed by Sigil (`.sigil/` exists). Use Sigil MCP tools
 BEFORE Grep, Glob, or Read when you need to find or understand code.
 
 | Instead of | Use |
 |---|---|
-| Grep + Read to find code | `symbex_locate("<task>")` |
-| Read to view a function | `symbex_symbol("<name>")` |
-| Grep to find callers | `symbex_callers("<name>")` |
-| Grep to find callees | `symbex_callees("<name>")` |
-| Guessing what breaks | `symbex_impact("<name>")` before any edit |
-| Reading files for project context | `symbex_knowledge()` at start of task |
+| Grep + Read to find code | `sigil_locate("<task>")` |
+| Read to view a function | `sigil_symbol("<name>")` |
+| Grep to find callers | `sigil_callers("<name>")` |
+| Grep to find callees | `sigil_callees("<name>")` |
+| Guessing what breaks | `sigil_impact("<name>")` before any edit |
+| Reading files for project context | `sigil_knowledge()` at start of task |
 
-After `git pull`: run `symbex index` to sync the index.
-Never load a full file if symbex can answer with a symbol span.\
+After `git pull`: run `sigil index` to sync the index.
+Never load a full file if sigil can answer with a symbol span.\
 """
 
 _GLOBAL_POLICY = """\
-## Symbex
+## Sigil
 
-In repositories with a `.symbex/` directory, use `symbex_*` MCP tools BEFORE
+In repositories with a `.sigil/` directory, use `sigil_*` MCP tools BEFORE
 Grep, Glob, or Read when you need to locate or understand code:
-- `symbex_knowledge()` — full project context at the start of a task
-- `symbex_locate("<task>")` — find relevant symbols (replaces grep + read)
-- `symbex_symbol("<name>")` — get a function's source span
-- `symbex_callers` / `symbex_callees` — navigate the call graph
-- `symbex_impact("<name>")` — check what breaks before editing\
+- `sigil_knowledge()` — full project context at the start of a task
+- `sigil_locate("<task>")` — find relevant symbols (replaces grep + read)
+- `sigil_symbol("<name>")` — get a function's source span
+- `sigil_callers` / `sigil_callees` — navigate the call graph
+- `sigil_impact("<name>")` — check what breaks before editing\
 """
 
 
 def upsert_agent_policy(file_path: Path, content: str) -> None:
-    """Write or update the symbex policy block in file_path."""
+    """Write or update the sigil policy block in file_path."""
     block = f"{_START}\n{content}\n{_END}\n"
     if not file_path.exists():
         file_path.write_text(block)
@@ -64,7 +64,7 @@ def upsert_agent_policy(file_path: Path, content: str) -> None:
 
 
 def register_global_claude(global_claude_dir: Path | None = None) -> Path:
-    """Write/update Symbex trigger policy in ~/.claude/CLAUDE.md."""
+    """Write/update Sigil trigger policy in ~/.claude/CLAUDE.md."""
     if global_claude_dir is None:
         global_claude_dir = Path.home() / ".claude"
     global_claude_dir.mkdir(parents=True, exist_ok=True)
@@ -74,7 +74,7 @@ def register_global_claude(global_claude_dir: Path | None = None) -> Path:
 
 
 def register_global_agents_md(global_dir: Path | None = None) -> Path:
-    """Write/update Symbex trigger policy in ~/.agents/AGENTS.md."""
+    """Write/update Sigil trigger policy in ~/.agents/AGENTS.md."""
     if global_dir is None:
         global_dir = Path.home() / ".agents"
     global_dir.mkdir(parents=True, exist_ok=True)
@@ -84,7 +84,7 @@ def register_global_agents_md(global_dir: Path | None = None) -> Path:
 
 
 def register_mcp_claude(project_root: Path, server_root: Path) -> None:
-    """Register symbex in the project's .mcp.json for Claude Code."""
+    """Register sigil in the project's .mcp.json for Claude Code."""
     mcp_file = project_root / ".mcp.json"
     data: dict = {"mcpServers": {}}
     if mcp_file.exists():
@@ -93,8 +93,8 @@ def register_mcp_claude(project_root: Path, server_root: Path) -> None:
         except json.JSONDecodeError:
             pass
     data.setdefault("mcpServers", {})
-    data["mcpServers"]["symbex"] = {
-        "command": "symbex-mcp",
+    data["mcpServers"]["sigil"] = {
+        "command": "sigil-mcp",
         "args": ["--root", str(server_root.resolve())],
     }
     mcp_file.write_text(json.dumps(data, indent=2))
@@ -104,7 +104,7 @@ def register_mcp_gemini(
     server_root: Path,
     gemini_config_dir: Path | None = None,
 ) -> None:
-    """Register symbex in the Gemini/Antigravity MCP config."""
+    """Register sigil in the Gemini/Antigravity MCP config."""
     if gemini_config_dir is None:
         gemini_config_dir = Path.home() / ".gemini" / "config"
     gemini_config_dir.mkdir(parents=True, exist_ok=True)
@@ -116,8 +116,8 @@ def register_mcp_gemini(
         except json.JSONDecodeError:
             pass
     data.setdefault("mcpServers", {})
-    data["mcpServers"]["symbex"] = {
-        "command": "symbex-mcp",
+    data["mcpServers"]["sigil"] = {
+        "command": "sigil-mcp",
         "args": ["--root", str(server_root.resolve())],
     }
     gemini_file.write_text(json.dumps(data, indent=2))

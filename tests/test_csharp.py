@@ -1,5 +1,5 @@
 import pytest
-from symbex_core.indexer import extract_symbols_csharp, extract_symbols_razor
+from sigil_core.indexer import extract_symbols_csharp, extract_symbols_razor
 
 _CS_SOURCE = """\
 using System;

@@ -1,6 +1,6 @@
 import json
 import sqlite3
-from symbex_core.retrieval import SymbolResult, _estimate_tokens
+from sigil_core.retrieval import SymbolResult, _estimate_tokens
 
 
 def _row_to_result(row, is_signature_only: bool, call_count: int = 0, call_sites=None) -> SymbolResult:

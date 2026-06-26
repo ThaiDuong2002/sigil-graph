@@ -1,8 +1,8 @@
 from pathlib import Path
-from symbex_core.db import get_db, init_schema
-from symbex_core.indexer import index_project
-from symbex_core.retrieval import search_bm25, SymbolResult, locate
-from symbex_core.cache import QueryCache
+from sigil_core.db import get_db, init_schema
+from sigil_core.indexer import index_project
+from sigil_core.retrieval import search_bm25, SymbolResult, locate
+from sigil_core.cache import QueryCache
 
 
 def _setup(tmp_path: Path):

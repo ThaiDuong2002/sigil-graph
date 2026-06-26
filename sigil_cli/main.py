@@ -5,22 +5,22 @@ from pathlib import Path
 
 import click
 
-from symbex_core.db import get_db, get_index_version, init_schema
-from symbex_core.graph import get_callers, get_callees, get_impact
-from symbex_core.indexer import index_project
-from symbex_core.knowledge import write_knowledge
-from symbex_core.retrieval import locate, search_bm25
+from sigil_core.db import get_db, get_index_version, init_schema
+from sigil_core.graph import get_callers, get_callees, get_impact
+from sigil_core.indexer import index_project
+from sigil_core.knowledge import write_knowledge
+from sigil_core.retrieval import locate, search_bm25
 
 try:
-    _version = importlib.metadata.version("symbex")
+    _version = importlib.metadata.version("sigil")
 except importlib.metadata.PackageNotFoundError:
     _version = "dev"
 
 
 def _find_install_dir() -> Path | None:
-    """Return the symbex git clone root, or None if not an editable git install."""
-    import symbex_core
-    candidate = Path(symbex_core.__file__).parent.parent
+    """Return the sigil git clone root, or None if not an editable git install."""
+    import sigil_core
+    candidate = Path(sigil_core.__file__).parent.parent
     if (candidate / ".git").exists():
         return candidate
     return None
@@ -44,7 +44,7 @@ def _fmt_symbol_header(name: str, kind: str, file_path: str,
 
 
 @click.group()
-@click.version_option(version=_version, prog_name="symbex")
+@click.version_option(version=_version, prog_name="sigil")
 @click.option("--root", default=".", show_default=True,
               type=click.Path(exists=False), help="Project root directory.")
 @click.pass_context
@@ -221,9 +221,9 @@ def tests_cmd(ctx, name):
 def status_cmd(ctx):
     """Show index statistics."""
     root = ctx.obj["root"]
-    db_path = root / ".symbex" / "symbex.db"
+    db_path = root / ".sigil" / "sigil.db"
     if not db_path.exists():
-        click.echo("Not indexed. Run: symbex index")
+        click.echo("Not indexed. Run: sigil index")
         return
     conn = get_db(root)
     version = get_index_version(conn)
@@ -249,12 +249,12 @@ def knowledge_cmd(ctx):
 
 @cli.command("update")
 def update_cmd():
-    """Update symbex to the latest version (git-based installs only)."""
+    """Update sigil to the latest version (git-based installs only)."""
     install_dir = _find_install_dir()
     if install_dir is None:
         click.echo(
-            "Cannot auto-update: symbex was not installed via install.sh/install.ps1.\n"
-            "  To update a pipx install:  pipx upgrade symbex-graph\n"
+            "Cannot auto-update: sigil was not installed via install.sh/install.ps1.\n"
+            "  To update a pipx install:  pipx upgrade sigil-graph\n"
             "  To reinstall from source:  re-run the one-liner install script."
         )
         sys.exit(1)
@@ -264,7 +264,7 @@ def update_cmd():
         capture_output=True, text=True,
     ).stdout.strip()
 
-    click.echo(f"Updating symbex at {install_dir} ...")
+    click.echo(f"Updating sigil at {install_dir} ...")
 
     pull = subprocess.run(
         ["git", "-C", str(install_dir), "pull"],
@@ -296,5 +296,5 @@ def update_cmd():
     click.echo("Restart your shell to use the new version.")
 
 
-from symbex_cli.init import init_cmd
+from sigil_cli.init import init_cmd
 cli.add_command(init_cmd)

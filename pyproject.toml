@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "symbex"
+name = "sigil"
 version = "0.3.0"
 requires-python = ">=3.10"
 dependencies = [
@@ -19,8 +19,8 @@ dependencies = [
 dev = ["pytest>=8.0", "pytest-cov"]
 
 [project.scripts]
-symbex = "symbex_cli.main:cli"
-symbex-mcp = "symbex_mcp.server:main"
+sigil = "sigil_cli.main:cli"
+sigil-mcp = "sigil_mcp.server:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["symbex_core", "symbex_mcp", "symbex_cli"]
+packages = ["sigil_core", "sigil_mcp", "sigil_cli"]
