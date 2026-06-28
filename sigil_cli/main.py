@@ -156,6 +156,7 @@ def locate_cmd(ctx, task, budget):
 @click.pass_context
 def symbol_cmd(ctx, name):
     """Print the full source of the named symbol."""
+    from sigil_mcp.server import _MAX_SYMBOL_CHARS
     root = ctx.obj["root"]
     conn = _open_db(root)
     row = conn.execute(
@@ -167,7 +168,16 @@ def symbol_cmd(ctx, name):
         click.echo(f"Error: symbol '{name}' not found", err=True)
         sys.exit(1)
     click.echo(_fmt_symbol_header(row[0], row[1], row[2], row[3], row[4]))
-    click.echo(row[5])
+    source_text = row[5]
+    if len(source_text) > _MAX_SYMBOL_CHARS:
+        click.echo(source_text[:_MAX_SYMBOL_CHARS])
+        click.echo(
+            f"\n[truncated — original {len(source_text):,} chars. "
+            f"Run `sigil ignore add <directory>` then `sigil index` to remove this symbol.]",
+            err=True,
+        )
+    else:
+        click.echo(source_text)
 
 
 @cli.command("callers")

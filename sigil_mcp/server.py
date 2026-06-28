@@ -58,6 +58,12 @@ def _locate_symbols(
     }
 
 
+# Symbols whose source text exceeds this are almost certainly minified or
+# auto-generated.  Returning 400k+ chars would overflow the agent's context;
+# truncate and warn instead.
+_MAX_SYMBOL_CHARS = 50_000
+
+
 def _get_symbol(conn: sqlite3.Connection, name: str) -> dict:
     row = conn.execute(
         "SELECT name, kind, file_path, start_line, end_line, source_text "
@@ -66,14 +72,28 @@ def _get_symbol(conn: sqlite3.Connection, name: str) -> dict:
     ).fetchone()
     if row is None:
         return {"error": f"symbol '{name}' not found"}
-    return {
+    source_text = row[5]
+    original_len = len(source_text)
+    truncated = original_len > _MAX_SYMBOL_CHARS
+    if truncated:
+        source_text = source_text[:_MAX_SYMBOL_CHARS]
+    result: dict = {
         "name": row[0],
         "kind": row[1],
         "file_path": row[2],
         "start_line": row[3],
         "end_line": row[4],
-        "text": row[5],
+        "text": source_text,
     }
+    if truncated:
+        result["truncated"] = True
+        result["warning"] = (
+            f"Source text truncated to {_MAX_SYMBOL_CHARS:,} chars "
+            f"(original: {original_len:,} chars). "
+            f"This symbol is likely from a minified or auto-generated file. "
+            f"Run `sigil ignore add <directory>` then `sigil index` to remove it."
+        )
+    return result
 
 
 def _get_callers_result(
