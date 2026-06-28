@@ -59,7 +59,7 @@ pipx install git+https://github.com/ThaiDuong2002/sigil-graph.git
 
 ```bash
 sigil --version
-# sigil, version 0.4.6
+# sigil, version 0.4.8
 
 sigil --help
 ```
@@ -70,7 +70,7 @@ sigil --help
 # Git-based installs (install.sh / install.ps1)
 sigil update
 # Updating sigil at ~/.sigil ...
-# Updated: af1fedd → cdb6882 (sigil 0.4.6)
+# Updated: af1fedd → cdb6882 (sigil 0.4.8)
 
 # pipx installs
 pipx upgrade sigil-graph
@@ -138,6 +138,12 @@ sigil index
 
 # When nothing changed:
 # Up to date — 142 symbols, 12 files, 8 edges
+```
+
+Use `--rebuild-edges` to force a full call-graph rebuild even when no files changed (useful after upgrading from a version with false-positive edges):
+
+```bash
+sigil index --rebuild-edges
 ```
 
 ---
@@ -304,18 +310,21 @@ The generated file has four sections:
 
 Also generated automatically by `sigil init`.
 
+> **Performance note:** `sigil knowledge` is optimized for large projects. On a 20k-symbol, 325k-edge codebase it completes in seconds — it uses a SQL index on the call graph and never loads all symbol source text into memory at once.
+
 ---
 
 ### `sigil update`
 
-Pull the latest version from GitHub and reinstall. Only works for git-based installs (`install.sh` / `install.ps1`).
+Pull the latest version from GitHub. Only works for git-based installs (`install.sh` / `install.ps1`).
 
 ```bash
 sigil update
 # Updating sigil at ~/.sigil ...
-# Updated: a1b2c3d → e4f5a6b
-# Restart your shell to use the new version.
+# Updated: a1b2c3d → e4f5a6b (sigil 0.4.8)
 ```
+
+The version number is updated in-process immediately — no shell restart needed. Run `sigil --version` to confirm.
 
 For pipx installs: `pipx upgrade sigil-graph`
 
@@ -411,6 +420,10 @@ This covers both cross-file calls (via import resolution) and same-file calls. R
 Each file's modification time (mtime) is checked first — if it hasn't changed, the file is skipped without any I/O. If mtime changed, the SHA-256 hash is compared to confirm real content changes before re-parsing. Only content-changed files are re-parsed.
 
 After `git pull`, `sigil index` syncs in seconds regardless of project size. Tested on codebases with 500k–1M LOC and 20k+ symbols.
+
+### Call-graph precision
+
+The edge resolver uses a pattern that avoids false-positive method calls: `obj.method()` on an unrelated object does not create an edge to a same-file `method` symbol. Only direct calls (`method(...)`) and explicit receiver calls (`self.method(...)` / `this.method(...)`) are recorded.
 
 ### Language support
 
