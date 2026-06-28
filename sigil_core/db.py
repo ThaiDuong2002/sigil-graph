@@ -50,6 +50,11 @@ def init_schema(conn: sqlite3.Connection) -> None:
             content_rowid=id
         );
         CREATE INDEX IF NOT EXISTS idx_edges_callee ON edges(callee_id);
+        CREATE TABLE IF NOT EXISTS file_imports (
+            importer TEXT NOT NULL,
+            imported  TEXT NOT NULL,
+            PRIMARY KEY (importer, imported)
+        );
         INSERT OR IGNORE INTO meta VALUES ('index_version', '0');
     """)
     conn.commit()
@@ -89,6 +94,19 @@ def migrate_schema(conn: sqlite3.Connection) -> None:
                 );
             """)
             conn.execute("INSERT INTO bm25_index(bm25_index) VALUES('rebuild')")
+
+    # Add file_imports table (tracks which files import which, for incremental edges)
+    file_imports_exists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='file_imports'"
+    ).fetchone()
+    if not file_imports_exists:
+        conn.execute("""
+            CREATE TABLE file_imports (
+                importer TEXT NOT NULL,
+                imported  TEXT NOT NULL,
+                PRIMARY KEY (importer, imported)
+            )
+        """)
 
     conn.commit()
 

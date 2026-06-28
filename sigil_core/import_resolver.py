@@ -1,6 +1,7 @@
 import ast
 import re
 from pathlib import Path
+from typing import Callable
 
 from sigil_core.indexer import Symbol
 
@@ -108,12 +109,18 @@ def _find_call_sites_lines(lines: list[str], callee_name: str, caller_start_line
 def resolve_edges(
     symbols_by_file: dict[str, list[Symbol]],
     root: Path,
-) -> list[EdgeData]:
-    """
-    Returns [(caller_name, callee_name, call_count, call_sites)] for all detected calls.
+    files_to_resolve: set[str] | None = None,
+    progress: Callable[[int, int], None] | None = None,
+) -> tuple[list[EdgeData], list[tuple[str, str]]]:
+    """Return (edges, file_imports) for the given symbol graph.
 
-    Covers both cross-file calls (via import resolution) and same-file calls.
-    call_sites contains 1-based absolute line numbers in the caller's source file.
+    edges: [(caller_name, callee_name, call_count, call_sites)]
+    file_imports: [(importer_rel_path, imported_rel_path)] — all import relationships
+        found in the resolved files (used to maintain the file_imports DB table).
+
+    files_to_resolve: if given, only resolve edges for files in this set.
+        Edges for other files are left unchanged in the DB.
+    progress: optional callable(done_count, total_count) called after each file.
     """
     # Build global lookup: (file_path, local_name) -> qualified_name
     name_index: dict[tuple[str, str], str] = {}
@@ -127,18 +134,34 @@ def resolve_edges(
         abs_to_rel[str((root / file_path).resolve())] = file_path
 
     edges: list[EdgeData] = []
+    file_imports: list[tuple[str, str]] = []
 
-    for file_path, syms in symbols_by_file.items():
+    all_files = list(symbols_by_file.items())
+    # n_to_resolve: how many files will actually be processed (for progress reporting)
+    if files_to_resolve is None:
+        n_to_resolve = len(all_files)
+    else:
+        n_to_resolve = sum(1 for fp, _ in all_files if fp in files_to_resolve)
+
+    resolved_count = 0
+
+    for file_path, syms in all_files:
+        # Incremental mode: skip files not in the re-resolve set
+        if files_to_resolve is not None and file_path not in files_to_resolve:
+            continue
+
         abs_path = root / file_path
         try:
             source = abs_path.read_text(encoding='utf-8', errors='ignore')
         except OSError:
+            resolved_count += 1
+            if progress:
+                progress(resolved_count, n_to_resolve)
             continue
 
         source_lines = source.splitlines()
 
         # Fill source_text for symbols that have none — avoids loading it from the DB.
-        # Symbols are passed with source_text='' when the caller wants to save memory.
         for sym in syms:
             if not sym.source_text:
                 sym.source_text = '\n'.join(
@@ -148,7 +171,7 @@ def resolve_edges(
         if file_path.endswith('.py'):
             imports = extract_python_imports(source)
         elif file_path.endswith(('.cs', '.cshtml')):
-            imports = {}  # namespace-to-file mapping not supported; same-file edges still resolve
+            imports = {}
         else:
             imports = extract_typescript_imports(source)
 
@@ -162,6 +185,10 @@ def resolve_edges(
                 if rel_target:
                     resolved[local_name] = rel_target
 
+        # Record file-level import relationships (deduplicated)
+        for rel_target in set(resolved.values()):
+            file_imports.append((file_path, rel_target))
+
         # local_name -> qualified_name for same-file symbols
         same_file: dict[str, str] = {}
         for sym in syms:
@@ -170,19 +197,16 @@ def resolve_edges(
 
         for caller_sym in syms:
             # Class source_text includes ALL method bodies — scanning it as a
-            # caller is redundant (every method is already a separate caller_sym)
-            # and O(class_size) more expensive. Skip class-kind callers entirely.
+            # caller is redundant and O(class_size) more expensive.
             if caller_sym.kind == 'class':
                 continue
 
             caller_local = caller_sym.name.split('.')[-1]
             caller_text = caller_sym.source_text
-            # Pre-split once; reused across all callee checks for this caller.
-            caller_lines = None  # lazy — only split if a check passes the pre-filter
+            caller_lines = None  # lazy — only split if a pre-filter passes
 
             # Cross-file edges
             for local_name, rel_target_file in resolved.items():
-                # Fast pre-filter: skip regex if name doesn't appear at all.
                 if local_name not in caller_text:
                     continue
                 if caller_lines is None:
@@ -206,7 +230,6 @@ def resolve_edges(
                     continue
                 if local_name in resolved:
                     continue
-                # Fast pre-filter: skip regex if name doesn't appear at all.
                 if local_name not in caller_text:
                     continue
                 if caller_lines is None:
@@ -222,4 +245,8 @@ def resolve_edges(
                         sites,
                     ))
 
-    return edges
+        resolved_count += 1
+        if progress:
+            progress(resolved_count, n_to_resolve)
+
+    return edges, file_imports

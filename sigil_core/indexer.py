@@ -1,7 +1,7 @@
 import json
 import os
 import sqlite3
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
@@ -422,6 +422,16 @@ def _extract_file(path: Path, root: Path) -> list[Symbol]:
     return extract_symbols_typescript(source, rel, test)
 
 
+def _parse_worker(args: tuple[str, str]) -> list[Symbol]:
+    """Top-level worker for ProcessPoolExecutor — must be picklable.
+
+    Re-reads the file from disk in the worker process (I/O is cheap vs. pickling
+    large source strings) and returns the extracted symbol list.
+    """
+    path_str, root_str = args
+    return _extract_file(Path(path_str), Path(root_str))
+
+
 def index_project(
     root: Path,
     conn: sqlite3.Connection,
@@ -493,7 +503,7 @@ def index_project(
         conn.executemany("UPDATE files SET mtime=? WHERE path=?", mtime_only)
         conn.commit()
 
-    # ── Phase 4: parse content-changed files (sequential — tree-sitter not thread-safe) ──
+    # ── Phase 4: parse content-changed files ─────────────────────────────────
     changed_files: list[Path] = []
     total_new_symbols = 0
     new_file_sym_names: set[str] = set()   # names emitted from re-parsed files
@@ -501,36 +511,49 @@ def index_project(
     if to_parse:
         _p(f"Parsing {len(to_parse)} changed file(s)...")
 
-    for path, rel, mtime, h in to_parse:
-        symbols = _extract_file(path, root)
+        # Parallel parsing with ProcessPoolExecutor.
+        # Each worker re-reads its file from disk (cheap; file cache is warm) so
+        # we only pickle small (path, root) tuples across the process boundary.
+        # Threshold: only worth the fork overhead for ≥8 files.
+        worker_args = [(str(p), str(root)) for p, _, _, _ in to_parse]
+        if len(to_parse) >= 8:
+            workers = min(max(1, (os.cpu_count() or 2) - 1), 6)
+            with ProcessPoolExecutor(max_workers=workers) as pool:
+                parsed_results: list[list[Symbol]] = list(
+                    pool.map(_parse_worker, worker_args, chunksize=4)
+                )
+        else:
+            parsed_results = [_parse_worker(a) for a in worker_args]
 
-        old_ids = [r[0] for r in conn.execute(
-            "SELECT id FROM symbols WHERE file_path=?", (rel,)
-        ).fetchall()]
-        if old_ids:
-            ph = ','.join('?' * len(old_ids))
+        # ── Phase 4b: write parsed results to DB (sequential — SQLite) ───────
+        for (path, rel, mtime, h), symbols in zip(to_parse, parsed_results):
+            old_ids = [r[0] for r in conn.execute(
+                "SELECT id FROM symbols WHERE file_path=?", (rel,)
+            ).fetchall()]
+            if old_ids:
+                ph = ','.join('?' * len(old_ids))
+                conn.execute(
+                    f"DELETE FROM edges WHERE caller_id IN ({ph}) OR callee_id IN ({ph})",
+                    old_ids + old_ids,
+                )
+                conn.execute(f"DELETE FROM symbols WHERE id IN ({ph})", old_ids)
+
+            for sym in symbols:
+                conn.execute(
+                    "INSERT INTO symbols(name,kind,file_path,start_line,end_line,"
+                    "source_text,signature_text,is_test) VALUES(?,?,?,?,?,?,?,?)",
+                    (sym.name, sym.kind, sym.file_path, sym.start_line, sym.end_line,
+                     sym.source_text, sym.signature_text, int(sym.is_test)),
+                )
+                new_file_sym_names.add(sym.name)
+
             conn.execute(
-                f"DELETE FROM edges WHERE caller_id IN ({ph}) OR callee_id IN ({ph})",
-                old_ids + old_ids,
+                "INSERT OR REPLACE INTO files(path,mtime,hash) VALUES(?,?,?)",
+                (rel, mtime, h),
             )
-            conn.execute(f"DELETE FROM symbols WHERE id IN ({ph})", old_ids)
-
-        for sym in symbols:
-            conn.execute(
-                "INSERT INTO symbols(name,kind,file_path,start_line,end_line,"
-                "source_text,signature_text,is_test) VALUES(?,?,?,?,?,?,?,?)",
-                (sym.name, sym.kind, sym.file_path, sym.start_line, sym.end_line,
-                 sym.source_text, sym.signature_text, int(sym.is_test)),
-            )
-            new_file_sym_names.add(sym.name)
-
-        conn.execute(
-            "INSERT OR REPLACE INTO files(path,mtime,hash) VALUES(?,?,?)",
-            (rel, mtime, h),
-        )
-        conn.commit()
-        changed_files.append(path)
-        total_new_symbols += len(symbols)
+            conn.commit()
+            changed_files.append(path)
+            total_new_symbols += len(symbols)
 
     # ── Phase 5: remove ghost files (deleted/renamed) ─────────────────────────
     ghost_rels = set(file_cache.keys()) - on_disk_rels
@@ -551,8 +574,7 @@ def index_project(
 
     # ── Phase 6: rebuild edges + FTS if anything changed ─────────────────────
     if changed_files or ghost_rels or rebuild_edges:
-        # Load symbols WITHOUT source_text — resolve_edges reads files itself,
-        # so loading source_text here would be double I/O for large projects.
+        # Load symbols WITHOUT source_text — resolve_edges reads files itself.
         full_symbols: dict[str, list[Symbol]] = {}
         for row in conn.execute(
             "SELECT name,kind,file_path,start_line,end_line,signature_text,is_test "
@@ -567,11 +589,81 @@ def index_project(
             )
             full_symbols.setdefault(row[2], []).append(sym)
 
-        n_files = len(full_symbols)
-        _p(f"Resolving call graph for {n_files} file(s)...")
-        conn.execute("DELETE FROM edges")
-        edges = resolve_edges(full_symbols, root)
+        # ── Incremental edge resolution ──────────────────────────────────────
+        # On a full rebuild (rebuild_edges=True) or first index, resolve all files.
+        # On incremental updates, only re-resolve files whose content changed plus
+        # files that import from them (their cross-file edges to changed symbols
+        # need refreshing).  Edges for unaffected file-pairs are kept intact.
+        if rebuild_edges:
+            files_to_resolve: set[str] | None = None  # all files
+            conn.execute("DELETE FROM edges")
+        else:
+            changed_rels: set[str] = (
+                {str(p.relative_to(root)) for p in changed_files} | ghost_rels
+            )
+            # Find files that statically import from any changed file
+            if changed_rels:
+                ph = ','.join('?' for _ in changed_rels)
+                importer_rows = conn.execute(
+                    f"SELECT DISTINCT importer FROM file_imports WHERE imported IN ({ph})",
+                    list(changed_rels),
+                ).fetchall()
+                importing_files = {r[0] for r in importer_rows}
+            else:
+                importing_files = set()
+
+            files_to_resolve = changed_rels | importing_files
+
+            # Delete only the edges that belong to the re-resolve set (caller side).
+            # Phase 4 already deleted edges where callee is in a changed file (CASCADE),
+            # so we just need to clean up outgoing edges from importers.
+            if files_to_resolve:
+                ph = ','.join('?' for _ in files_to_resolve)
+                stale_ids = [r[0] for r in conn.execute(
+                    f"SELECT id FROM symbols WHERE file_path IN ({ph})",
+                    list(files_to_resolve),
+                ).fetchall()]
+                if stale_ids:
+                    id_ph = ','.join('?' for _ in stale_ids)
+                    conn.execute(
+                        f"DELETE FROM edges WHERE caller_id IN ({id_ph})",
+                        stale_ids,
+                    )
+
+        n_resolve = (
+            len(full_symbols) if files_to_resolve is None
+            else len([f for f in full_symbols if f in files_to_resolve])
+        )
+        _p(f"Resolving call graph for {n_resolve} file(s)...")
+
+        # Per-file progress: report every ~10% of the resolved set
+        tick = max(1, n_resolve // 10)
+
+        def _phase6_progress(done: int, total: int) -> None:
+            if done % tick == 0:
+                _p(f"  {done}/{total} files resolved...")
+
+        edges, file_imports_data = resolve_edges(
+            full_symbols, root,
+            files_to_resolve=files_to_resolve,
+            progress=_phase6_progress,
+        )
         _p(f"Found {len(edges)} edges.")
+
+        # Update file_imports table: replace rows for re-resolved files
+        if files_to_resolve is not None and files_to_resolve:
+            ph = ','.join('?' for _ in files_to_resolve)
+            conn.execute(
+                f"DELETE FROM file_imports WHERE importer IN ({ph})",
+                list(files_to_resolve),
+            )
+        else:
+            conn.execute("DELETE FROM file_imports")
+        if file_imports_data:
+            conn.executemany(
+                "INSERT OR IGNORE INTO file_imports(importer, imported) VALUES(?,?)",
+                file_imports_data,
+            )
 
         # One query to build name→id map; avoids 2 SQL queries per edge.
         name_to_id: dict[str, int] = {
