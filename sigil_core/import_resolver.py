@@ -156,12 +156,24 @@ def resolve_edges(
             same_file[local] = sym.name
 
         for caller_sym in syms:
+            # Class source_text includes ALL method bodies — scanning it as a
+            # caller is redundant (every method is already a separate caller_sym)
+            # and O(class_size) more expensive. Skip class-kind callers entirely.
+            if caller_sym.kind == 'class':
+                continue
+
             caller_local = caller_sym.name.split('.')[-1]
+            caller_text = caller_sym.source_text
             # Pre-split once; reused across all callee checks for this caller.
-            caller_lines = caller_sym.source_text.splitlines()
+            caller_lines = None  # lazy — only split if a check passes the pre-filter
 
             # Cross-file edges
             for local_name, rel_target_file in resolved.items():
+                # Fast pre-filter: skip regex if name doesn't appear at all.
+                if local_name not in caller_text:
+                    continue
+                if caller_lines is None:
+                    caller_lines = caller_text.splitlines()
                 sites = _find_call_sites_lines(
                     caller_lines, local_name, caller_sym.start_line
                 )
@@ -181,6 +193,11 @@ def resolve_edges(
                     continue
                 if local_name in resolved:
                     continue
+                # Fast pre-filter: skip regex if name doesn't appear at all.
+                if local_name not in caller_text:
+                    continue
+                if caller_lines is None:
+                    caller_lines = caller_text.splitlines()
                 sites = _find_call_sites_lines(
                     caller_lines, local_name, caller_sym.start_line
                 )
