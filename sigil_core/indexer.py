@@ -29,8 +29,20 @@ EXCLUDE_DIRS = frozenset({
     'node_modules', 'venv', '.venv', 'env', '.env',
     'dist', 'build', '__pycache__', '.git', '.sigil',
     'bin', 'obj', 'packages',  # .NET build artefacts
+    'migrations',               # Django/EF auto-generated migrations
 })
-EXCLUDE_SIZE = 500 * 1024
+
+# Filename suffixes (lowercase) that indicate minified, bundled, or
+# auto-generated files.  Checked against the full lowercased filename
+# so "foo.min.js" matches ".min.js" but "minified.js" does not.
+EXCLUDE_FILE_SUFFIXES = (
+    # Minified / bundled JS output
+    '.min.js', '.min.mjs', '.min.cjs',
+    '.bundle.js', '.chunk.js',
+    # Auto-generated C# (Visual Studio, Roslyn source generators)
+    '.designer.cs', '.generated.cs',
+    '.g.cs', '.g.i.cs',
+)
 TEST_SUFFIXES = (
     '_test.py', '.test.ts', '.test.js', '.spec.ts', '.spec.js',
     'Tests.cs', 'Test.cs', '_tests.cs',  # NUnit / xUnit
@@ -398,6 +410,9 @@ def iter_source_files(root: Path) -> Iterator[Path]:
         dirpath = Path(dirpath_str)
         for fname in filenames:
             if Path(fname).suffix not in _SUPPORTED_EXTS:
+                continue
+            fname_lower = fname.lower()
+            if any(fname_lower.endswith(s) for s in EXCLUDE_FILE_SUFFIXES):
                 continue
             path = dirpath / fname
             try:
