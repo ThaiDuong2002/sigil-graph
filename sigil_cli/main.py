@@ -60,11 +60,36 @@ def index_cmd(ctx):
     root = ctx.obj["root"]
     conn = _open_db(root)
     stats = index_project(root, conn)
+
+    files_changed = stats.get("files_changed", 0)
+    removed       = stats.get("removed", [])
+
+    if files_changed == 0 and not removed:
+        sym_total = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+        click.echo(
+            f"Up to date — {sym_total} symbols, "
+            f"{stats['files']} files, "
+            f"{stats['edges']} edges"
+        )
+        return
+
     click.echo(
-        f"Indexed {stats['symbols']} symbols, "
-        f"{stats['files']} files, "
+        f"Indexed {stats['symbols']} new symbols across {files_changed} file(s), "
+        f"{stats['files']} files total, "
         f"{stats['edges']} edges"
     )
+
+    def _show(marker: str, names: list) -> None:
+        if not names:
+            return
+        MAX = 6
+        preview = ", ".join(names[:MAX])
+        extra   = f" … +{len(names) - MAX} more" if len(names) > MAX else ""
+        click.echo(f"  {marker} {len(names):>4}  {preview}{extra}")
+
+    _show("+ new    ", stats.get("added", []))
+    _show("~ changed", stats.get("changed", []))
+    _show("- removed", removed)
 
 
 @cli.command("locate")

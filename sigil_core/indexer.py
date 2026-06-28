@@ -1,5 +1,7 @@
 import json
+import os
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
@@ -380,16 +382,29 @@ def extract_symbols_razor(source: str, file_path: str, is_test: bool) -> list[Sy
     return symbols
 
 
+_SUPPORTED_EXTS = frozenset(('.py', '.ts', '.js', '.tsx', '.jsx', '.cs', '.cshtml'))
+
+
 def iter_source_files(root: Path) -> Iterator[Path]:
-    """Yield all source files under root, excluding EXCLUDE_DIRS and large files."""
-    for path in root.rglob('*'):
-        if not path.is_file():
-            continue
-        if any(excl in path.parts for excl in EXCLUDE_DIRS):
-            continue
-        if path.stat().st_size > EXCLUDE_SIZE:
-            continue
-        if path.suffix in ('.py', '.ts', '.js', '.tsx', '.jsx', '.cs', '.cshtml'):
+    """Yield all source files under root, excluding EXCLUDE_DIRS and large files.
+
+    Uses os.walk with in-place directory pruning so excluded dirs (node_modules,
+    venv, .git, etc.) are never descended into — much faster than rglob for large
+    projects.
+    """
+    for dirpath_str, dirnames, filenames in os.walk(str(root)):
+        # Prune excluded dirs in-place — os.walk will not descend into them
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
+        dirpath = Path(dirpath_str)
+        for fname in filenames:
+            if Path(fname).suffix not in _SUPPORTED_EXTS:
+                continue
+            path = dirpath / fname
+            try:
+                if path.stat().st_size > EXCLUDE_SIZE:
+                    continue
+            except OSError:
+                continue
             yield path
 
 
@@ -407,28 +422,82 @@ def _extract_file(path: Path, root: Path) -> list[Symbol]:
     return extract_symbols_typescript(source, rel, test)
 
 
-def _upsert_file(path: Path, root: Path, conn: sqlite3.Connection) -> list[Symbol] | None:
-    """Re-index a file if its hash changed. Returns new symbols or None if unchanged."""
-    rel = str(path.relative_to(root))
-    current_hash = file_hash(path)
-    row = conn.execute("SELECT hash FROM files WHERE path=?", (rel,)).fetchone()
-    if row and row[0] == current_hash:
-        return None  # unchanged
+def index_project(root: Path, conn: sqlite3.Connection) -> dict:
+    """Index all source files in root incrementally. Returns stats dict."""
+    from sigil_core.db import bump_index_version
+    from sigil_core.import_resolver import resolve_edges
 
-    symbols = _extract_file(path, root)
+    # Load entire files table once — avoids one DB query per file during scan
+    file_cache: dict[str, tuple[str, float]] = {
+        row[0]: (row[1], row[2])
+        for row in conn.execute("SELECT path, hash, mtime FROM files").fetchall()
+    }
 
-    with conn:
-        # Remove old data for this file
+    # Snapshot symbol names for diff (names only — fast even at 100k symbols)
+    old_names: set[str] = {
+        row[0] for row in conn.execute("SELECT name FROM symbols").fetchall()
+    }
+
+    # ── Phase 1: scan — mtime early-exit (no file read for unchanged files) ──
+    on_disk_rels: set[str] = set()
+    needs_hash: list[tuple[Path, str, float]] = []   # mtime changed, need hash check
+
+    for path in iter_source_files(root):
+        rel = str(path.relative_to(root))
+        on_disk_rels.add(rel)
+        mtime = path.stat().st_mtime
+        cached = file_cache.get(rel)
+        if cached and cached[1] == mtime:
+            continue  # mtime unchanged → content definitely same, skip
+        needs_hash.append((path, rel, mtime))
+
+    # ── Phase 2: compute hashes in parallel (I/O-bound, thread-safe) ─────────
+    def _do_hash(args: tuple[Path, str, float]) -> tuple[Path, str, float, str]:
+        path, rel, mtime = args
+        return path, rel, mtime, file_hash(path)
+
+    if needs_hash:
+        workers = min(8, os.cpu_count() or 4)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            hashed: list[tuple[Path, str, float, str]] = list(
+                pool.map(_do_hash, needs_hash)
+            )
+    else:
+        hashed = []
+
+    # ── Phase 3: split mtime-only vs. content-changed ────────────────────────
+    to_parse: list[tuple[Path, str, float, str]] = []
+    mtime_only: list[tuple[float, str]] = []
+
+    for path, rel, mtime, h in hashed:
+        cached = file_cache.get(rel)
+        if cached and cached[0] == h:
+            mtime_only.append((mtime, rel))   # content same, just bump mtime record
+        else:
+            to_parse.append((path, rel, mtime, h))
+
+    if mtime_only:
+        conn.executemany("UPDATE files SET mtime=? WHERE path=?", mtime_only)
+        conn.commit()
+
+    # ── Phase 4: parse content-changed files (sequential — tree-sitter not thread-safe) ──
+    changed_files: list[Path] = []
+    total_new_symbols = 0
+    new_file_sym_names: set[str] = set()   # names emitted from re-parsed files
+
+    for path, rel, mtime, h in to_parse:
+        symbols = _extract_file(path, root)
+
         old_ids = [r[0] for r in conn.execute(
             "SELECT id FROM symbols WHERE file_path=?", (rel,)
         ).fetchall()]
         if old_ids:
-            placeholders = ','.join('?' * len(old_ids))
+            ph = ','.join('?' * len(old_ids))
             conn.execute(
-                f"DELETE FROM edges WHERE caller_id IN ({placeholders}) OR callee_id IN ({placeholders})",
+                f"DELETE FROM edges WHERE caller_id IN ({ph}) OR callee_id IN ({ph})",
                 old_ids + old_ids,
             )
-            conn.execute(f"DELETE FROM symbols WHERE id IN ({placeholders})", old_ids)
+            conn.execute(f"DELETE FROM symbols WHERE id IN ({ph})", old_ids)
 
         for sym in symbols:
             conn.execute(
@@ -437,55 +506,35 @@ def _upsert_file(path: Path, root: Path, conn: sqlite3.Connection) -> list[Symbo
                 (sym.name, sym.kind, sym.file_path, sym.start_line, sym.end_line,
                  sym.source_text, sym.signature_text, int(sym.is_test)),
             )
+            new_file_sym_names.add(sym.name)
 
-        mtime = path.stat().st_mtime
         conn.execute(
             "INSERT OR REPLACE INTO files(path,mtime,hash) VALUES(?,?,?)",
-            (rel, mtime, current_hash),
+            (rel, mtime, h),
         )
-    return symbols
+        conn.commit()
+        changed_files.append(path)
+        total_new_symbols += len(symbols)
 
-
-def index_project(root: Path, conn: sqlite3.Connection) -> dict:
-    """Index all source files in root incrementally. Returns stats dict."""
-    from sigil_core.db import bump_index_version
-    from sigil_core.import_resolver import resolve_edges
-
-    changed_files: list[Path] = []
-    total_symbols = 0
-
-    # Collect the set of all on-disk source files (relative paths)
-    on_disk_rels: set[str] = set()
-    for path in iter_source_files(root):
-        rel = str(path.relative_to(root))
-        on_disk_rels.add(rel)
-        result = _upsert_file(path, root, conn)
-        if result is not None:
-            changed_files.append(path)
-            total_symbols += len(result)
-
-    # Critical 3: remove ghost files (deleted/renamed) from the DB
-    db_rels = {row[0] for row in conn.execute("SELECT path FROM files").fetchall()}
-    ghost_rels = db_rels - on_disk_rels
+    # ── Phase 5: remove ghost files (deleted/renamed) ─────────────────────────
+    ghost_rels = set(file_cache.keys()) - on_disk_rels
     if ghost_rels:
         for ghost_rel in ghost_rels:
             old_ids = [r[0] for r in conn.execute(
                 "SELECT id FROM symbols WHERE file_path=?", (ghost_rel,)
             ).fetchall()]
             if old_ids:
-                placeholders = ','.join('?' * len(old_ids))
+                ph = ','.join('?' * len(old_ids))
                 conn.execute(
-                    f"DELETE FROM edges WHERE caller_id IN ({placeholders}) OR callee_id IN ({placeholders})",
+                    f"DELETE FROM edges WHERE caller_id IN ({ph}) OR callee_id IN ({ph})",
                     old_ids + old_ids,
                 )
-                conn.execute(f"DELETE FROM symbols WHERE id IN ({placeholders})", old_ids)
+                conn.execute(f"DELETE FROM symbols WHERE id IN ({ph})", old_ids)
             conn.execute("DELETE FROM files WHERE path=?", (ghost_rel,))
         conn.commit()
 
+    # ── Phase 6: rebuild edges + FTS if anything changed ─────────────────────
     if changed_files or ghost_rels:
-        # Critical 2: rebuild ALL edges from the full symbol set so cross-file
-        # edges between changed and unchanged files are not lost.
-        # Build symbols_by_file from the complete symbols table.
         full_symbols: dict[str, list[Symbol]] = {}
         for row in conn.execute(
             "SELECT name,kind,file_path,start_line,end_line,source_text,signature_text,is_test "
@@ -499,7 +548,6 @@ def index_project(root: Path, conn: sqlite3.Connection) -> dict:
             )
             full_symbols.setdefault(row[2], []).append(sym)
 
-        # Drop all existing edges and re-resolve from scratch
         conn.execute("DELETE FROM edges")
         edges = resolve_edges(full_symbols, root)
         for caller_name, callee_name, call_count, call_sites in edges:
@@ -516,11 +564,27 @@ def index_project(root: Path, conn: sqlite3.Connection) -> dict:
                     (caller_row[0], callee_row[0], call_count, json.dumps(call_sites)),
                 )
 
-        # Rebuild FTS5 index
         conn.execute("INSERT INTO bm25_index(bm25_index) VALUES('rebuild')")
         conn.commit()
         bump_index_version(conn)
 
+    # ── Diff: what was added / removed / changed ──────────────────────────────
+    new_names: set[str] = {
+        row[0] for row in conn.execute("SELECT name FROM symbols").fetchall()
+    }
+    added   = sorted(new_names - old_names)
+    removed = sorted(old_names - new_names)
+    # "changed" = re-parsed symbols that existed before (hash changed → content changed)
+    changed_sym_names = sorted(new_file_sym_names & old_names & new_names)
+
     total_files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
     total_edges = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
-    return {"symbols": total_symbols, "files": total_files, "edges": total_edges}
+    return {
+        "symbols":       total_new_symbols,
+        "files":         total_files,
+        "edges":         total_edges,
+        "added":         added,
+        "removed":       removed,
+        "changed":       changed_sym_names,
+        "files_changed": len(changed_files),
+    }
