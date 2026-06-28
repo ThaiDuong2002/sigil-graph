@@ -426,10 +426,12 @@ def index_project(
     root: Path,
     conn: sqlite3.Connection,
     progress=None,
+    rebuild_edges: bool = False,
 ) -> dict:
     """Index all source files in root incrementally. Returns stats dict.
 
     progress: optional callable(str) for user-facing status lines (e.g. click.echo).
+    rebuild_edges: force Phase 6 (edge resolution) even when no files changed.
     """
     from sigil_core.db import bump_index_version
     from sigil_core.import_resolver import resolve_edges
@@ -548,7 +550,7 @@ def index_project(
         conn.commit()
 
     # ── Phase 6: rebuild edges + FTS if anything changed ─────────────────────
-    if changed_files or ghost_rels:
+    if changed_files or ghost_rels or rebuild_edges:
         # Load symbols WITHOUT source_text — resolve_edges reads files itself,
         # so loading source_text here would be double I/O for large projects.
         full_symbols: dict[str, list[Symbol]] = {}

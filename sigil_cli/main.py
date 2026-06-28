@@ -89,12 +89,14 @@ def cli(ctx, root):
 
 
 @cli.command("index")
+@click.option("--rebuild-edges", is_flag=True, default=False,
+              help="Force rebuild of the call graph even if no files changed.")
 @click.pass_context
-def index_cmd(ctx):
+def index_cmd(ctx, rebuild_edges):
     """Rebuild the symbol index."""
     root = ctx.obj["root"]
     conn = _open_db(root)
-    stats = index_project(root, conn, progress=click.echo)
+    stats = index_project(root, conn, progress=click.echo, rebuild_edges=rebuild_edges)
 
     files_changed = stats.get("files_changed", 0)
     removed       = stats.get("removed", [])

@@ -87,8 +87,21 @@ def _find_call_sites(source_text: str, callee_name: str, caller_start_line: int)
 
 
 def _find_call_sites_lines(lines: list[str], callee_name: str, caller_start_line: int) -> list[int]:
-    """Same as _find_call_sites but accepts pre-split lines to avoid repeated splitlines()."""
-    pattern = re.compile(r'\b' + re.escape(callee_name) + r'\s*\(')
+    """Same as _find_call_sites but accepts pre-split lines to avoid repeated splitlines().
+
+    Matches direct calls (foo(...)) and self/this-qualified calls (self.foo(...),
+    this.foo(...)), but NOT arbitrary member-access calls (obj.foo(...)) which
+    would create false edges to same-file symbols when an external object happens
+    to have a method with the same name.
+    """
+    # Two alternatives:
+    #   1. self.name( or this.name(  — explicit same-instance calls
+    #   2. name( when NOT preceded by '.' or a word character — standalone calls
+    pattern = re.compile(
+        r'(?:(?:self|this)\.' + re.escape(callee_name)
+        + r'|(?<![.\w])' + re.escape(callee_name)
+        + r')\s*\('
+    )
     return [caller_start_line + i for i, line in enumerate(lines) if pattern.search(line)]
 
 
