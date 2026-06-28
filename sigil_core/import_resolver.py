@@ -8,6 +8,14 @@ from sigil_core.indexer import Symbol
 # (caller_name, callee_name, call_count, call_sites)
 EdgeData = tuple[str, str, int, list[int]]
 
+# Symbols whose source_text exceeds this are skipped in edge scanning.
+# Very large functions (>50KB) are almost always generated/minified code;
+# scanning them for every callee candidate would take minutes per file.
+_MAX_CALLER_CHARS = 50_000
+
+# Compiled regex cache — callee patterns repeat across many callers/files.
+_PATTERN_CACHE: dict[str, re.Pattern] = {}
+
 
 def extract_python_imports(source: str) -> dict[str, str]:
     """Returns {local_name: module_dotted_path} for all from-imports."""
@@ -49,7 +57,9 @@ def extract_typescript_imports(source: str) -> dict[str, str]:
                     continue
                 if ' as ' in part:
                     _, alias = part.split(' as ', 1)
-                    result[alias.strip()] = module
+                    alias = alias.strip()
+                    if alias:  # guard: malformed "foo as " produces empty alias
+                        result[alias] = module
                 else:
                     result[part] = module
     return result
@@ -95,14 +105,18 @@ def _find_call_sites_lines(lines: list[str], callee_name: str, caller_start_line
     would create false edges to same-file symbols when an external object happens
     to have a method with the same name.
     """
-    # Two alternatives:
-    #   1. self.name( or this.name(  — explicit same-instance calls
-    #   2. name( when NOT preceded by '.' or a word character — standalone calls
-    pattern = re.compile(
-        r'(?:(?:self|this)\.' + re.escape(callee_name)
-        + r'|(?<![.\w])' + re.escape(callee_name)
-        + r')\s*\('
-    )
+    if not callee_name:
+        return []
+    if callee_name not in _PATTERN_CACHE:
+        # Two alternatives:
+        #   1. self.name( or this.name(  — explicit same-instance calls
+        #   2. name( when NOT preceded by '.' or a word character — standalone calls
+        _PATTERN_CACHE[callee_name] = re.compile(
+            r'(?:(?:self|this)\.' + re.escape(callee_name)
+            + r'|(?<![.\w])' + re.escape(callee_name)
+            + r')\s*\('
+        )
+    pattern = _PATTERN_CACHE[callee_name]
     return [caller_start_line + i for i, line in enumerate(lines) if pattern.search(line)]
 
 
@@ -110,7 +124,7 @@ def resolve_edges(
     symbols_by_file: dict[str, list[Symbol]],
     root: Path,
     files_to_resolve: set[str] | None = None,
-    progress: Callable[[int, int], None] | None = None,
+    progress: Callable[[int, int, str], None] | None = None,
 ) -> tuple[list[EdgeData], list[tuple[str, str]]]:
     """Return (edges, file_imports) for the given symbol graph.
 
@@ -120,7 +134,8 @@ def resolve_edges(
 
     files_to_resolve: if given, only resolve edges for files in this set.
         Edges for other files are left unchanged in the DB.
-    progress: optional callable(done_count, total_count) called after each file.
+    progress: optional callable(done_count, total_count, current_file_path)
+        called after processing each file.
     """
     # Build global lookup: (file_path, local_name) -> qualified_name
     name_index: dict[tuple[str, str], str] = {}
@@ -156,7 +171,7 @@ def resolve_edges(
         except OSError:
             resolved_count += 1
             if progress:
-                progress(resolved_count, n_to_resolve)
+                progress(resolved_count, n_to_resolve, file_path)
             continue
 
         source_lines = source.splitlines()
@@ -201,12 +216,19 @@ def resolve_edges(
             if caller_sym.kind == 'class':
                 continue
 
-            caller_local = caller_sym.name.split('.')[-1]
             caller_text = caller_sym.source_text
+            # Skip pathologically large symbols (generated/minified code).
+            # Scanning a 50KB function body for 100 callee names would take minutes.
+            if len(caller_text) > _MAX_CALLER_CHARS:
+                continue
+
+            caller_local = caller_sym.name.split('.')[-1]
             caller_lines = None  # lazy — only split if a pre-filter passes
 
             # Cross-file edges
             for local_name, rel_target_file in resolved.items():
+                if not local_name:  # guard: malformed import produced empty name
+                    continue
                 if local_name not in caller_text:
                     continue
                 if caller_lines is None:
@@ -226,6 +248,8 @@ def resolve_edges(
 
             # Same-file edges (skip symbols already covered by imports, skip self)
             for local_name, qualified_name in same_file.items():
+                if not local_name:  # guard: empty symbol name (shouldn't happen)
+                    continue
                 if local_name == caller_local:
                     continue
                 if local_name in resolved:
@@ -247,6 +271,6 @@ def resolve_edges(
 
         resolved_count += 1
         if progress:
-            progress(resolved_count, n_to_resolve)
+            progress(resolved_count, n_to_resolve, file_path)
 
     return edges, file_imports

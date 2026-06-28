@@ -636,12 +636,14 @@ def index_project(
         )
         _p(f"Resolving call graph for {n_resolve} file(s)...")
 
-        # Per-file progress: report every ~10% of the resolved set
+        # Per-file progress: report every ~10% of the resolved set.
+        # Always show current file path so a hang is immediately identifiable.
         tick = max(1, n_resolve // 10)
 
-        def _phase6_progress(done: int, total: int) -> None:
+        def _phase6_progress(done: int, total: int, current_file: str = "") -> None:
             if done % tick == 0:
-                _p(f"  {done}/{total} files resolved...")
+                suffix = f" ({current_file})" if current_file else ""
+                _p(f"  {done}/{total} files resolved...{suffix}")
 
         edges, file_imports_data = resolve_edges(
             full_symbols, root,
