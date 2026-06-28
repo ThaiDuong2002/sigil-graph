@@ -11,15 +11,22 @@ from pathlib import Path
 # Helpers
 # ---------------------------------------------------------------------------
 
+_MAX_DOC_CHARS = 120
+
 def _extract_docstring(source_text: str) -> str:
-    """Return the first docstring found in source_text, or empty string."""
+    """Return the first docstring found in source_text (truncated to _MAX_DOC_CHARS)."""
     m = re.search(r'"""(.*?)"""', source_text, re.DOTALL)
     if m:
-        return ' '.join(m.group(1).strip().splitlines()).strip()
-    m = re.search(r"'''(.*?)'''", source_text, re.DOTALL)
-    if m:
-        return ' '.join(m.group(1).strip().splitlines()).strip()
-    return ""
+        doc = ' '.join(m.group(1).strip().splitlines()).strip()
+    else:
+        m = re.search(r"'''(.*?)'''", source_text, re.DOTALL)
+        if m:
+            doc = ' '.join(m.group(1).strip().splitlines()).strip()
+        else:
+            return ""
+    if len(doc) > _MAX_DOC_CHARS:
+        doc = doc[:_MAX_DOC_CHARS].rstrip() + "…"
+    return doc
 
 
 def _classify_name(name: str) -> str:
@@ -79,24 +86,33 @@ def _count_prefix(names: list[str], prefix: str) -> int:
 def _section_architecture(conn: sqlite3.Connection) -> list[str]:
     lines = ["## Architecture", ""]
 
-    # Layer breakdown
+    # Layer breakdown — aggregate by detected layer, show top files per layer.
+    # Listing every individual file would be enormous on large projects (1000+ files).
     file_rows = conn.execute(
         "SELECT file_path, COUNT(*) FROM symbols WHERE is_test=0 "
-        "GROUP BY file_path ORDER BY file_path"
+        "GROUP BY file_path ORDER BY COUNT(*) DESC"
     ).fetchall()
 
-    layers: dict[str, list[str]] = {}
+    # (layer) -> list of (cnt, file_path), already sorted desc by cnt
+    layers: dict[str, list[tuple[int, str]]] = {}
     for file_path, cnt in file_rows:
         layer = _detect_layer(file_path)
-        layers.setdefault(layer, []).append(f"`{file_path}` ({cnt} symbols)")
+        layers.setdefault(layer, []).append((cnt, file_path))
 
     if layers:
+        MAX_FILES_PER_LAYER = 5
         lines.append("### Module layers")
         for layer in ('Entry', 'API', 'Service', 'Core', 'Model', 'Data', 'Utility', 'Test'):
-            if layer in layers:
-                lines.append(f"\n**{layer}**")
-                for item in layers[layer]:
-                    lines.append(f"- {item}")
+            if layer not in layers:
+                continue
+            entries = layers[layer]
+            total_files = len(entries)
+            total_syms = sum(c for c, _ in entries)
+            lines.append(f"\n**{layer}** — {total_files} file(s), {total_syms} symbols")
+            for cnt, fp in entries[:MAX_FILES_PER_LAYER]:
+                lines.append(f"- `{fp}` ({cnt} symbols)")
+            if total_files > MAX_FILES_PER_LAYER:
+                lines.append(f"- … and {total_files - MAX_FILES_PER_LAYER} more")
         lines.append("")
 
     # Entry points — functions/methods with no callers
@@ -363,9 +379,12 @@ def _section_hotspots(conn: sqlite3.Connection) -> list[str]:
     lines.append("### Test coverage map")
     lines.append(f"- **{len(tested_files)}/{len(source_files)}** source files have test coverage")
     if untested:
-        lines.append("- Files with no test references:")
-        for f in untested[:10]:
+        MAX_UNTESTED = 10
+        lines.append(f"- Files with no test references ({len(untested)} total, showing first {min(len(untested), MAX_UNTESTED)}):")
+        for f in untested[:MAX_UNTESTED]:
             lines.append(f"  - `{f}`")
+        if len(untested) > MAX_UNTESTED:
+            lines.append(f"  - … and {len(untested) - MAX_UNTESTED} more")
     lines.append("")
 
     return lines
