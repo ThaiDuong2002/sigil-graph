@@ -1,6 +1,8 @@
 import importlib.metadata
+import platform
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import click
@@ -311,16 +313,39 @@ def update_cmd():
     scripts_dir = Path(sys.executable).parent
     pip_candidates = [scripts_dir / "pip.exe", scripts_dir / "pip"]
     pip = next((p for p in pip_candidates if p.exists()), pip_candidates[-1])
-    reinstall = subprocess.run(
-        [str(pip), "install", "-e", str(install_dir), "--quiet"],
-        capture_output=True, text=True,
-    )
-    if reinstall.returncode != 0:
-        click.echo(f"Reinstall failed:\n{reinstall.stderr}", err=True)
-        sys.exit(1)
 
-    click.echo(f"Updated: {old_sha} → {new_sha}")
-    click.echo("Restart your shell to use the new version.")
+    if platform.system() == "Windows":
+        # sigil.exe is locked while running — schedule reinstall to run after this
+        # process exits, then launch it detached so it outlives the parent.
+        ps1 = (
+            f"Start-Sleep -Seconds 2\n"
+            f"& '{pip}' install -e '{install_dir}' --quiet 2>&1\n"
+            f"if ($LASTEXITCODE -eq 0) {{\n"
+            f"    Write-Host 'Sigil reinstalled OK. Restart your shell.'\n"
+            f"}} else {{\n"
+            f"    Write-Host 'Reinstall failed. Run manually: pip install -e {install_dir}'\n"
+            f"}}\n"
+            f"Remove-Item -Path $MyInvocation.MyCommand.Path -Force\n"
+        )
+        tmp = Path(tempfile.gettempdir()) / "sigil_reinstall.ps1"
+        tmp.write_text(ps1, encoding="utf-8")
+        subprocess.Popen(
+            ["powershell.exe", "-NonInteractive", "-WindowStyle", "Hidden",
+             "-ExecutionPolicy", "Bypass", "-File", str(tmp)],
+            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+        )
+        click.echo(f"Updated: {old_sha} → {new_sha}")
+        click.echo("Reinstalling in background (takes ~5s) — restart your shell after.")
+    else:
+        reinstall = subprocess.run(
+            [str(pip), "install", "-e", str(install_dir), "--quiet"],
+            capture_output=True, text=True,
+        )
+        if reinstall.returncode != 0:
+            click.echo(f"Reinstall failed:\n{reinstall.stderr}", err=True)
+            sys.exit(1)
+        click.echo(f"Updated: {old_sha} → {new_sha}")
+        click.echo("Restart your shell to use the new version.")
 
 
 @cli.command("summarize")
