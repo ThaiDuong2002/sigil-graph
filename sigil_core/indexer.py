@@ -418,7 +418,9 @@ def iter_source_files(root: Path) -> Iterator[Path]:
             try:
                 if path.stat().st_size > EXCLUDE_SIZE:
                     continue
-            except OSError:
+            except (OSError, ValueError):
+                # OSError: permission denied, broken symlink, etc.
+                # ValueError: path too long on Windows (>260 chars)
                 continue
             yield path
 
