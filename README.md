@@ -59,7 +59,7 @@ pipx install git+https://github.com/ThaiDuong2002/sigil-graph.git
 
 ```bash
 sigil --version
-# sigil, version 0.4.0
+# sigil, version 0.4.6
 
 sigil --help
 ```
@@ -69,6 +69,8 @@ sigil --help
 ```bash
 # Git-based installs (install.sh / install.ps1)
 sigil update
+# Updating sigil at ~/.sigil ...
+# Updated: af1fedd → cdb6882 (sigil 0.4.6)
 
 # pipx installs
 pipx upgrade sigil-graph
@@ -96,7 +98,10 @@ This does six things:
 
 ```
 Indexing project...
-Indexed 142 symbols, 23 files, 89 edges
+Parsing 23 changed file(s)...
+Resolving call graph for 23 file(s)...
+Found 89 edges.
+Indexed 142 new symbols across 23 file(s), 23 files total, 89 edges
 Overview written to .sigil/overview.md
 Project knowledge written to .sigil/knowledge.md
 Agent policy written to CLAUDE.md
@@ -117,11 +122,22 @@ All commands accept `--root PATH` to specify a project root (defaults to the cur
 
 ### `sigil index`
 
-Re-index changed files. Run after `git pull` or whenever the codebase changes. Only files whose SHA-256 hash has changed are re-parsed.
+Re-index changed files. Run after `git pull` or whenever the codebase changes. Only files whose content has changed are re-parsed (mtime fast-path, then SHA-256 for confirmation).
 
 ```bash
 sigil index
-# Indexed 3 symbols, 3 files, 2 edges
+
+# When files changed:
+# Parsing 3 changed file(s)...
+# Resolving call graph for 12 file(s)...
+# Found 8 edges.
+# Indexed 3 new symbols across 3 file(s), 12 files total, 8 edges
+#   + new      3  add_user, get_session, validate_token
+#   ~ changed  1  login
+#   - removed  1  legacy_auth
+
+# When nothing changed:
+# Up to date — 142 symbols, 12 files, 8 edges
 ```
 
 ---
@@ -392,7 +408,9 @@ This covers both cross-file calls (via import resolution) and same-file calls. R
 
 ### Incremental indexing
 
-Each file's SHA-256 hash is stored. Only files with a changed hash are re-parsed. After `git pull`, `sigil index` syncs in seconds regardless of project size.
+Each file's modification time (mtime) is checked first — if it hasn't changed, the file is skipped without any I/O. If mtime changed, the SHA-256 hash is compared to confirm real content changes before re-parsing. Only content-changed files are re-parsed.
+
+After `git pull`, `sigil index` syncs in seconds regardless of project size. Tested on codebases with 500k–1M LOC and 20k+ symbols.
 
 ### Language support
 
@@ -423,10 +441,15 @@ Each file's SHA-256 hash is stored. Only files with a changed hash are re-parsed
 ```bash
 git pull
 sigil index
-# Indexed 8 symbols, 3 files, 5 edges
+# Parsing 3 changed file(s)...
+# Resolving call graph for 47 file(s)...
+# Found 312 edges.
+# Indexed 8 new symbols across 3 file(s), 47 files total, 312 edges
+#   + new     5  handle_payment, refund, validate_card, ...
+#   ~ changed 3  checkout, cart_total, apply_discount
 ```
 
-Unchanged files are skipped entirely regardless of project size.
+Unchanged files are skipped entirely — mtime check first, SHA-256 only when mtime changed.
 
 ---
 
