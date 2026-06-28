@@ -430,5 +430,104 @@ def summarize_cmd(ctx, backend, force):
     click.echo("FTS index rebuilt — semantic search is now enriched.")
 
 
+@cli.group("ignore")
+@click.pass_context
+def ignore_group(ctx):
+    """Manage project-specific directory exclusions (.sigilignore)."""
+    ctx.ensure_object(dict)
+
+
+@ignore_group.command("add")
+@click.argument("path")
+@click.pass_context
+def ignore_add(ctx, path):
+    """Add a directory to .sigilignore.
+
+    PATH can be a directory name (e.g. 'vendor') or a relative path from the
+    project root (e.g. 'Scripts/tinymce').
+
+    \b
+    Examples:
+      sigil ignore add vendor
+      sigil ignore add Scripts/tinymce
+      sigil ignore add public/uploads
+    """
+    root = ctx.obj["root"]
+    sigilignore = root / ".sigilignore"
+    normalized = path.replace('\\', '/').strip('/').strip()
+    if not normalized:
+        click.echo("Error: empty path.", err=True)
+        return
+
+    if sigilignore.exists():
+        existing = sigilignore.read_text(encoding='utf-8')
+        entries = {l.strip() for l in existing.splitlines() if l.strip() and not l.startswith('#')}
+        if normalized in entries:
+            click.echo(f"Already in .sigilignore: {normalized}")
+            return
+        content = existing if existing.endswith('\n') else existing + '\n'
+        content += normalized + '\n'
+    else:
+        content = normalized + '\n'
+
+    sigilignore.write_text(content, encoding='utf-8')
+    click.echo(f"Added to .sigilignore: {normalized}")
+    click.echo("Run 'sigil index' to re-index without these directories.")
+
+
+@ignore_group.command("list")
+@click.pass_context
+def ignore_list(ctx):
+    """List all entries in .sigilignore."""
+    root = ctx.obj["root"]
+    sigilignore = root / ".sigilignore"
+
+    if not sigilignore.exists():
+        click.echo("No .sigilignore file. Use 'sigil ignore add <path>' to create one.")
+        return
+
+    entries = [
+        l.strip() for l in sigilignore.read_text(encoding='utf-8').splitlines()
+        if l.strip() and not l.strip().startswith('#')
+    ]
+    if not entries:
+        click.echo("No entries in .sigilignore.")
+        return
+
+    click.echo(f"Ignored directories ({len(entries)}):")
+    for entry in entries:
+        click.echo(f"  {entry}")
+
+
+@ignore_group.command("remove")
+@click.argument("path")
+@click.pass_context
+def ignore_remove(ctx, path):
+    """Remove a directory from .sigilignore.
+
+    \b
+    Example:
+      sigil ignore remove Scripts/tinymce
+    """
+    root = ctx.obj["root"]
+    sigilignore = root / ".sigilignore"
+
+    if not sigilignore.exists():
+        click.echo("No .sigilignore file found.")
+        return
+
+    normalized = path.replace('\\', '/').strip('/').strip()
+    lines = sigilignore.read_text(encoding='utf-8').splitlines(keepends=True)
+    new_lines = [l for l in lines if l.strip() != normalized]
+
+    if len(new_lines) == len(lines):
+        click.echo(f"Not found in .sigilignore: {normalized}")
+        return
+
+    sigilignore.write_text(''.join(new_lines), encoding='utf-8')
+    click.echo(f"Removed from .sigilignore: {normalized}")
+    click.echo("Run 'sigil index' to re-index.")
+
+
 from sigil_cli.init import init_cmd
 cli.add_command(init_cmd)

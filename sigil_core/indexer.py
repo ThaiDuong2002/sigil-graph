@@ -398,17 +398,69 @@ def extract_symbols_razor(source: str, file_path: str, is_test: bool) -> list[Sy
 _SUPPORTED_EXTS = frozenset(('.py', '.ts', '.js', '.tsx', '.jsx', '.cs', '.cshtml'))
 
 
-def iter_source_files(root: Path) -> Iterator[Path]:
+def load_user_excludes(root: Path) -> list[tuple[str, ...]]:
+    """Load user-defined exclude patterns from .sigilignore.
+
+    Each non-blank, non-comment line is a path to exclude:
+    - Single name  (e.g. "vendor") → skip any directory with that name at any depth
+    - Relative path (e.g. "Scripts/tinymce") → skip that specific subtree from root
+    """
+    sigilignore = root / '.sigilignore'
+    if not sigilignore.exists():
+        return []
+    excludes: list[tuple[str, ...]] = []
+    for line in sigilignore.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        # Normalize separators and strip leading ./
+        normalized = line.replace('\\', '/').strip('/')
+        if normalized.startswith('./'):
+            normalized = normalized[2:]
+        parts = tuple(p for p in normalized.split('/') if p)
+        if parts:
+            excludes.append(parts)
+    return excludes
+
+
+def iter_source_files(
+    root: Path,
+    user_excludes: list[tuple[str, ...]] | None = None,
+) -> Iterator[Path]:
     """Yield all source files under root, excluding EXCLUDE_DIRS and large files.
 
     Uses os.walk with in-place directory pruning so excluded dirs (node_modules,
     venv, .git, etc.) are never descended into — much faster than rglob for large
     projects.
+
+    user_excludes: patterns from .sigilignore, as returned by load_user_excludes().
     """
+    # Merge built-in name excludes with single-component user excludes
+    name_excludes = EXCLUDE_DIRS
+    prefix_excludes: list[tuple[str, ...]] = []
+    if user_excludes:
+        extra_names = frozenset(e[0] for e in user_excludes if len(e) == 1)
+        if extra_names:
+            name_excludes = EXCLUDE_DIRS | extra_names
+        prefix_excludes = [e for e in user_excludes if len(e) > 1]
+
     for dirpath_str, dirnames, filenames in os.walk(str(root)):
-        # Prune excluded dirs in-place — os.walk will not descend into them
-        dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
         dirpath = Path(dirpath_str)
+
+        # Prune excluded dirs in-place — os.walk will not descend into them
+        dirnames[:] = [d for d in dirnames if d not in name_excludes]
+
+        # Prune multi-component prefix excludes: if current dir is under an
+        # excluded prefix, clear dirnames (no further descent) and skip files.
+        if prefix_excludes:
+            try:
+                rel_parts = dirpath.relative_to(root).parts
+                if any(rel_parts[:len(e)] == e for e in prefix_excludes):
+                    dirnames.clear()
+                    continue
+            except ValueError:
+                pass
+
         for fname in filenames:
             if Path(fname).suffix not in _SUPPORTED_EXTS:
                 continue
@@ -479,11 +531,13 @@ def index_project(
         row[0] for row in conn.execute("SELECT name FROM symbols").fetchall()
     }
 
+    user_excludes = load_user_excludes(root)
+
     # ── Phase 1: scan — mtime early-exit (no file read for unchanged files) ──
     on_disk_rels: set[str] = set()
     needs_hash: list[tuple[Path, str, float]] = []   # mtime changed, need hash check
 
-    for path in iter_source_files(root):
+    for path in iter_source_files(root, user_excludes):
         rel = str(path.relative_to(root))
         on_disk_rels.add(rel)
         mtime = path.stat().st_mtime

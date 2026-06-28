@@ -59,7 +59,7 @@ pipx install git+https://github.com/ThaiDuong2002/sigil-graph.git
 
 ```bash
 sigil --version
-# sigil, version 0.4.14
+# sigil, version 0.4.15
 
 sigil --help
 ```
@@ -70,7 +70,7 @@ sigil --help
 # Git-based installs (install.sh / install.ps1)
 sigil update
 # Updating sigil at ~/.sigil ...
-# Updated: af1fedd → cdb6882 (sigil 0.4.14)
+# Updated: af1fedd → cdb6882 (sigil 0.4.15)
 
 # pipx installs
 pipx upgrade sigil-graph
@@ -318,6 +318,52 @@ Also generated automatically by `sigil init`.
 
 ---
 
+### `sigil ignore`
+
+Manage project-specific directory exclusions stored in `.sigilignore` at the project root. Entries added here are applied every time `sigil index` runs — no flag needed.
+
+```bash
+# Add a directory to exclude
+sigil ignore add vendor
+sigil ignore add Scripts/tinymce
+sigil ignore add public/uploads
+
+# List current ignores
+sigil ignore list
+# Ignored directories (2):
+#   vendor
+#   Scripts/tinymce
+
+# Remove an entry
+sigil ignore remove Scripts/tinymce
+
+# Then re-index to apply
+sigil index
+```
+
+**Pattern semantics:**
+
+| Entry | Matches |
+|---|---|
+| `vendor` | Any directory named `vendor` at any depth |
+| `Scripts/tinymce` | Only `Scripts/tinymce/` from the project root |
+| `src/generated` | Only `src/generated/` from the project root |
+
+You can also edit `.sigilignore` directly — one entry per line, `#` for comments:
+
+```
+# Third-party libraries bundled directly
+Scripts/tinymce
+Scripts/jquery
+
+# Generated output not caught by *.min.js exclusion
+public/assets/compiled
+```
+
+Changes take effect on the next `sigil index` run. Symbols from newly-ignored directories are removed from the index; symbols from un-ignored directories are added.
+
+---
+
 ### `sigil update`
 
 Pull the latest version from GitHub. Only works for git-based installs (`install.sh` / `install.ps1`).
@@ -325,7 +371,7 @@ Pull the latest version from GitHub. Only works for git-based installs (`install
 ```bash
 sigil update
 # Updating sigil at ~/.sigil ...
-# Updated: a1b2c3d → e4f5a6b (sigil 0.4.14)
+# Updated: a1b2c3d → e4f5a6b (sigil 0.4.15)
 ```
 
 The version number is updated in-process immediately — no shell restart needed. Run `sigil --version` to confirm.
@@ -439,8 +485,9 @@ Sigil skips files that would add noise without useful call graph information:
 | Minified JS | `*.min.js`, `*.bundle.js`, `*.chunk.js` | Generated/compiled — not source |
 | Generated C# | `*.designer.cs`, `*.generated.cs`, `*.g.cs` | Visual Studio / Roslyn auto-generated |
 | Large files | Files > 500 KB | Unlikely to be hand-authored source |
+| User-defined | Anything in `.sigilignore` | Project-specific exclusions |
 
-If your project bundles third-party libraries directly (e.g. `Scripts/tinymce/`), the minified file exclusion handles them automatically without needing to configure anything.
+If your project bundles third-party libraries directly (e.g. `Scripts/tinymce/`), add them with `sigil ignore add Scripts/tinymce`.
 
 ### Call-graph precision
 
