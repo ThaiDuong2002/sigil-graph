@@ -61,7 +61,7 @@ def index_cmd(ctx):
     """Rebuild the symbol index."""
     root = ctx.obj["root"]
     conn = _open_db(root)
-    stats = index_project(root, conn)
+    stats = index_project(root, conn, progress=click.echo)
 
     files_changed = stats.get("files_changed", 0)
     removed       = stats.get("removed", [])

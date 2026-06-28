@@ -83,12 +83,13 @@ def _module_to_file(module: str, root: Path, current_file: Path) -> Path | None:
 
 def _find_call_sites(source_text: str, callee_name: str, caller_start_line: int) -> list[int]:
     """Return 1-based absolute line numbers where callee_name( appears in source_text."""
+    return _find_call_sites_lines(source_text.splitlines(), callee_name, caller_start_line)
+
+
+def _find_call_sites_lines(lines: list[str], callee_name: str, caller_start_line: int) -> list[int]:
+    """Same as _find_call_sites but accepts pre-split lines to avoid repeated splitlines()."""
     pattern = re.compile(r'\b' + re.escape(callee_name) + r'\s*\(')
-    sites = []
-    for i, line in enumerate(source_text.splitlines()):
-        if pattern.search(line):
-            sites.append(caller_start_line + i)
-    return sites
+    return [caller_start_line + i for i, line in enumerate(lines) if pattern.search(line)]
 
 
 def resolve_edges(
@@ -121,6 +122,16 @@ def resolve_edges(
         except OSError:
             continue
 
+        source_lines = source.splitlines()
+
+        # Fill source_text for symbols that have none — avoids loading it from the DB.
+        # Symbols are passed with source_text='' when the caller wants to save memory.
+        for sym in syms:
+            if not sym.source_text:
+                sym.source_text = '\n'.join(
+                    source_lines[sym.start_line - 1 : sym.end_line]
+                )
+
         if file_path.endswith('.py'):
             imports = extract_python_imports(source)
         elif file_path.endswith(('.cs', '.cshtml')):
@@ -146,11 +157,13 @@ def resolve_edges(
 
         for caller_sym in syms:
             caller_local = caller_sym.name.split('.')[-1]
+            # Pre-split once; reused across all callee checks for this caller.
+            caller_lines = caller_sym.source_text.splitlines()
 
             # Cross-file edges
             for local_name, rel_target_file in resolved.items():
-                sites = _find_call_sites(
-                    caller_sym.source_text, local_name, caller_sym.start_line
+                sites = _find_call_sites_lines(
+                    caller_lines, local_name, caller_sym.start_line
                 )
                 if sites:
                     callee_key = (rel_target_file, local_name)
@@ -168,8 +181,8 @@ def resolve_edges(
                     continue
                 if local_name in resolved:
                     continue
-                sites = _find_call_sites(
-                    caller_sym.source_text, local_name, caller_sym.start_line
+                sites = _find_call_sites_lines(
+                    caller_lines, local_name, caller_sym.start_line
                 )
                 if sites:
                     edges.append((

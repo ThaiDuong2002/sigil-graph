@@ -422,10 +422,21 @@ def _extract_file(path: Path, root: Path) -> list[Symbol]:
     return extract_symbols_typescript(source, rel, test)
 
 
-def index_project(root: Path, conn: sqlite3.Connection) -> dict:
-    """Index all source files in root incrementally. Returns stats dict."""
+def index_project(
+    root: Path,
+    conn: sqlite3.Connection,
+    progress=None,
+) -> dict:
+    """Index all source files in root incrementally. Returns stats dict.
+
+    progress: optional callable(str) for user-facing status lines (e.g. click.echo).
+    """
     from sigil_core.db import bump_index_version
     from sigil_core.import_resolver import resolve_edges
+
+    def _p(msg: str) -> None:
+        if progress:
+            progress(msg)
 
     # Load entire files table once — avoids one DB query per file during scan
     file_cache: dict[str, tuple[str, float]] = {
@@ -485,6 +496,9 @@ def index_project(root: Path, conn: sqlite3.Connection) -> dict:
     total_new_symbols = 0
     new_file_sym_names: set[str] = set()   # names emitted from re-parsed files
 
+    if to_parse:
+        _p(f"Parsing {len(to_parse)} changed file(s)...")
+
     for path, rel, mtime, h in to_parse:
         symbols = _extract_file(path, root)
 
@@ -535,34 +549,44 @@ def index_project(root: Path, conn: sqlite3.Connection) -> dict:
 
     # ── Phase 6: rebuild edges + FTS if anything changed ─────────────────────
     if changed_files or ghost_rels:
+        # Load symbols WITHOUT source_text — resolve_edges reads files itself,
+        # so loading source_text here would be double I/O for large projects.
         full_symbols: dict[str, list[Symbol]] = {}
         for row in conn.execute(
-            "SELECT name,kind,file_path,start_line,end_line,source_text,signature_text,is_test "
+            "SELECT name,kind,file_path,start_line,end_line,signature_text,is_test "
             "FROM symbols"
         ).fetchall():
             sym = Symbol(
                 name=row[0], kind=row[1], file_path=row[2],
                 start_line=row[3], end_line=row[4],
-                source_text=row[5], signature_text=row[6],
-                is_test=bool(row[7]),
+                source_text='',  # filled in by resolve_edges from file content
+                signature_text=row[5],
+                is_test=bool(row[6]),
             )
             full_symbols.setdefault(row[2], []).append(sym)
 
+        n_files = len(full_symbols)
+        _p(f"Resolving call graph for {n_files} file(s)...")
         conn.execute("DELETE FROM edges")
         edges = resolve_edges(full_symbols, root)
-        for caller_name, callee_name, call_count, call_sites in edges:
-            caller_row = conn.execute(
-                "SELECT id FROM symbols WHERE name=?", (caller_name,)
-            ).fetchone()
-            callee_row = conn.execute(
-                "SELECT id FROM symbols WHERE name=?", (callee_name,)
-            ).fetchone()
-            if caller_row and callee_row:
-                conn.execute(
-                    "INSERT OR IGNORE INTO edges(caller_id, callee_id, call_count, call_sites) "
-                    "VALUES(?,?,?,?)",
-                    (caller_row[0], callee_row[0], call_count, json.dumps(call_sites)),
-                )
+        _p(f"Found {len(edges)} edges.")
+
+        # One query to build name→id map; avoids 2 SQL queries per edge.
+        name_to_id: dict[str, int] = {
+            row[0]: row[1]
+            for row in conn.execute("SELECT name, id FROM symbols")
+        }
+        edge_rows = [
+            (name_to_id[cn], name_to_id[ce], call_count, json.dumps(call_sites))
+            for cn, ce, call_count, call_sites in edges
+            if cn in name_to_id and ce in name_to_id
+        ]
+        if edge_rows:
+            conn.executemany(
+                "INSERT OR IGNORE INTO edges(caller_id, callee_id, call_count, call_sites) "
+                "VALUES(?,?,?,?)",
+                edge_rows,
+            )
 
         conn.execute("INSERT INTO bm25_index(bm25_index) VALUES('rebuild')")
         conn.commit()

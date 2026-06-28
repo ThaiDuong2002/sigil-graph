@@ -133,7 +133,7 @@ def init_cmd(ctx):
     click.echo("Indexing project...")
     conn = get_db(root)
     init_schema(conn)
-    stats = index_project(root, conn)
+    stats = index_project(root, conn, progress=click.echo)
     click.echo(
         f"Indexed {stats['symbols']} symbols, "
         f"{stats['files']} files, "
