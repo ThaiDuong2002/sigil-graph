@@ -308,7 +308,9 @@ def update_cmd():
         click.echo(f"Already up to date ({old_sha}).")
         return
 
-    pip = Path(sys.executable).parent / "pip"
+    scripts_dir = Path(sys.executable).parent
+    pip_candidates = [scripts_dir / "pip.exe", scripts_dir / "pip"]
+    pip = next((p for p in pip_candidates if p.exists()), pip_candidates[-1])
     reinstall = subprocess.run(
         [str(pip), "install", "-e", str(install_dir), "--quiet"],
         capture_output=True, text=True,
