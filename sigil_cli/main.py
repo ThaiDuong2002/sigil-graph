@@ -1,8 +1,7 @@
 import importlib.metadata
-import platform
+import re
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import click
@@ -25,6 +24,40 @@ def _find_install_dir() -> Path | None:
     candidate = Path(sigil_core.__file__).parent.parent
     if (candidate / ".git").exists():
         return candidate
+    return None
+
+
+def _patch_version_metadata(install_dir: Path) -> str | None:
+    """Read the new version from pyproject.toml and patch the dist-info METADATA.
+
+    Writing a text file (METADATA) is safe while sigil.exe is the running process
+    because only the .exe itself is locked by Windows — no subprocess or deferred
+    script needed.  Returns the new version string on success, None on failure.
+    """
+    pyproject = install_dir / "pyproject.toml"
+    try:
+        src = pyproject.read_text(encoding='utf-8')
+        m = re.search(r'^version\s*=\s*["\']([^"\']+)["\']', src, re.MULTILINE)
+        if not m:
+            return None
+        new_ver = m.group(1)
+    except OSError:
+        return None
+
+    try:
+        dist = importlib.metadata.distribution("sigil")
+        for pkg_file in dist.files or []:
+            if pkg_file.name == "METADATA":
+                meta_path = dist.locate_file(pkg_file)
+                old_text = meta_path.read_text(encoding='utf-8')
+                new_text = re.sub(
+                    r'^Version:.*$', f'Version: {new_ver}', old_text, flags=re.MULTILINE
+                )
+                meta_path.write_text(new_text, encoding='utf-8')
+                return new_ver
+    except Exception:
+        pass
+
     return None
 
 
@@ -310,42 +343,18 @@ def update_cmd():
         click.echo(f"Already up to date ({old_sha}).")
         return
 
-    scripts_dir = Path(sys.executable).parent
-    pip_candidates = [scripts_dir / "pip.exe", scripts_dir / "pip"]
-    pip = next((p for p in pip_candidates if p.exists()), pip_candidates[-1])
-
-    if platform.system() == "Windows":
-        # sigil.exe is locked while running — schedule reinstall to run after this
-        # process exits, then launch it detached so it outlives the parent.
-        ps1 = (
-            f"Start-Sleep -Seconds 2\n"
-            f"& '{pip}' install -e '{install_dir}' --quiet 2>&1\n"
-            f"if ($LASTEXITCODE -eq 0) {{\n"
-            f"    Write-Host 'Sigil reinstalled OK. Restart your shell.'\n"
-            f"}} else {{\n"
-            f"    Write-Host 'Reinstall failed. Run manually: pip install -e {install_dir}'\n"
-            f"}}\n"
-            f"Remove-Item -Path $MyInvocation.MyCommand.Path -Force\n"
-        )
-        tmp = Path(tempfile.gettempdir()) / "sigil_reinstall.ps1"
-        tmp.write_text(ps1, encoding="utf-8")
-        subprocess.Popen(
-            ["powershell.exe", "-NonInteractive", "-WindowStyle", "Hidden",
-             "-ExecutionPolicy", "Bypass", "-File", str(tmp)],
-            creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-        )
-        click.echo(f"Updated: {old_sha} → {new_sha}")
-        click.echo("Reinstalling in background (takes ~5s) — restart your shell after.")
+    # Patch the installed dist-info METADATA with the version from pyproject.toml.
+    # Writing a plain text file is safe in-process on all platforms — the only
+    # locked file on Windows is sigil.exe itself, not the dist-info metadata.
+    new_ver = _patch_version_metadata(install_dir)
+    if new_ver:
+        click.echo(f"Updated: {old_sha} → {new_sha} (sigil {new_ver})")
     else:
-        reinstall = subprocess.run(
-            [str(pip), "install", "-e", str(install_dir), "--quiet"],
-            capture_output=True, text=True,
-        )
-        if reinstall.returncode != 0:
-            click.echo(f"Reinstall failed:\n{reinstall.stderr}", err=True)
-            sys.exit(1)
         click.echo(f"Updated: {old_sha} → {new_sha}")
-        click.echo("Restart your shell to use the new version.")
+        click.echo(
+            f"  Could not update version metadata automatically.\n"
+            f"  Run manually if needed: pip install -e {install_dir}"
+        )
 
 
 @cli.command("summarize")
