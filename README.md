@@ -59,7 +59,7 @@ pipx install git+https://github.com/ThaiDuong2002/sigil-graph.git
 
 ```bash
 sigil --version
-# sigil, version 0.4.12
+# sigil, version 0.4.14
 
 sigil --help
 ```
@@ -70,7 +70,7 @@ sigil --help
 # Git-based installs (install.sh / install.ps1)
 sigil update
 # Updating sigil at ~/.sigil ...
-# Updated: af1fedd → cdb6882 (sigil 0.4.12)
+# Updated: af1fedd → cdb6882 (sigil 0.4.14)
 
 # pipx installs
 pipx upgrade sigil-graph
@@ -325,7 +325,7 @@ Pull the latest version from GitHub. Only works for git-based installs (`install
 ```bash
 sigil update
 # Updating sigil at ~/.sigil ...
-# Updated: a1b2c3d → e4f5a6b (sigil 0.4.8)
+# Updated: a1b2c3d → e4f5a6b (sigil 0.4.14)
 ```
 
 The version number is updated in-process immediately — no shell restart needed. Run `sigil --version` to confirm.

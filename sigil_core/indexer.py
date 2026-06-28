@@ -31,6 +31,7 @@ EXCLUDE_DIRS = frozenset({
     'bin', 'obj', 'packages',  # .NET build artefacts
     'migrations',               # Django/EF auto-generated migrations
 })
+EXCLUDE_SIZE = 500 * 1024
 
 # Filename suffixes (lowercase) that indicate minified, bundled, or
 # auto-generated files.  Checked against the full lowercased filename
