@@ -59,7 +59,7 @@ pipx install git+https://github.com/ThaiDuong2002/sigil-graph.git
 
 ```bash
 sigil --version
-# sigil, version 0.4.9
+# sigil, version 0.4.12
 
 sigil --help
 ```
@@ -70,7 +70,7 @@ sigil --help
 # Git-based installs (install.sh / install.ps1)
 sigil update
 # Updating sigil at ~/.sigil ...
-# Updated: af1fedd → cdb6882 (sigil 0.4.9)
+# Updated: af1fedd → cdb6882 (sigil 0.4.12)
 
 # pipx installs
 pipx upgrade sigil-graph
@@ -89,7 +89,7 @@ sigil init
 
 This does six things:
 
-1. **Index** — Parses all Python/TS/JS/C#/Razor files into SQLite (`.sigil/sigil.db`). Automatically skips `node_modules`, `venv`, `dist`, `bin`, `obj`, and files over 500 KB.
+1. **Index** — Parses all Python/TS/JS/C#/Razor files into SQLite (`.sigil/sigil.db`). Automatically skips `node_modules`, `venv`, `dist`, `bin`, `obj`, minified files (`*.min.js`), and auto-generated files (`*.designer.cs`, `*.g.cs`). Files over 500 KB are also skipped.
 2. **Overview** — Writes `.sigil/overview.md` — a compact project summary.
 3. **Knowledge** — Writes `.sigil/knowledge.md` — architecture, business logic, conventions, and hotspots derived from the full symbol graph.
 4. **Agent policy** — Appends a guidance block to `CLAUDE.md`, `AGENTS.md`, and `GEMINI.md` so agents know to reach for Sigil before reading files.
@@ -428,6 +428,19 @@ Each file's modification time (mtime) is checked first — if it hasn't changed,
 **Incremental edge resolution:** sigil tracks which files import which others in a lightweight `file_imports` table. When files change, only those files plus their direct importers are re-resolved — not the entire project. On a 1400-file project where 3 files change, this typically means 20 files instead of 600, giving a 10–30× speedup for incremental updates.
 
 After `git pull`, `sigil index` syncs in seconds regardless of project size. Tested on codebases with 500k–1M LOC and 20k+ symbols.
+
+### What gets excluded
+
+Sigil skips files that would add noise without useful call graph information:
+
+| Excluded | Examples | Why |
+|---|---|---|
+| Directories | `node_modules`, `venv`, `dist`, `bin`, `obj`, `packages`, `migrations` | Build output, dependencies, migrations |
+| Minified JS | `*.min.js`, `*.bundle.js`, `*.chunk.js` | Generated/compiled — not source |
+| Generated C# | `*.designer.cs`, `*.generated.cs`, `*.g.cs` | Visual Studio / Roslyn auto-generated |
+| Large files | Files > 500 KB | Unlikely to be hand-authored source |
+
+If your project bundles third-party libraries directly (e.g. `Scripts/tinymce/`), the minified file exclusion handles them automatically without needing to configure anything.
 
 ### Call-graph precision
 
