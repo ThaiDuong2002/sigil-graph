@@ -49,6 +49,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
             content=symbols,
             content_rowid=id
         );
+        CREATE INDEX IF NOT EXISTS idx_edges_callee ON edges(callee_id);
         INSERT OR IGNORE INTO meta VALUES ('index_version', '0');
     """)
     conn.commit()
@@ -56,7 +57,13 @@ def init_schema(conn: sqlite3.Connection) -> None:
 
 
 def migrate_schema(conn: sqlite3.Connection) -> None:
-    """Add columns introduced after the initial schema without dropping data."""
+    """Add columns and indexes introduced after the initial schema without dropping data."""
+    # Ensure callee_id index exists — critical for knowledge queries on large projects.
+    existing_indexes = {row[1] for row in conn.execute("PRAGMA index_list(edges)").fetchall()}
+    if 'idx_edges_callee' not in existing_indexes:
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_callee ON edges(callee_id)")
+        conn.commit()
+
     existing_edges = {row[1] for row in conn.execute("PRAGMA table_info(edges)").fetchall()}
     if 'call_count' not in existing_edges:
         conn.execute("ALTER TABLE edges ADD COLUMN call_count INTEGER NOT NULL DEFAULT 1")

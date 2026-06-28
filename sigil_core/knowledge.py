@@ -198,25 +198,31 @@ def _section_business_logic(conn: sqlite3.Connection) -> list[str]:
         lines.append("- *(none detected)*")
     lines.append("")
 
-    # Domain objects — classes with most methods
-    class_rows = conn.execute(
-        """
-        SELECT s.name, s.file_path, s.start_line, s.source_text,
-               COUNT(m.id) as method_count
-        FROM symbols s
-        LEFT JOIN symbols m ON m.name LIKE s.name || '.%' AND m.kind = 'method'
-        WHERE s.kind = 'class' AND s.is_test = 0
-        GROUP BY s.id
-        ORDER BY method_count DESC
-        LIMIT 10
-        """
+    # Domain objects — classes with most methods.
+    # LIKE-join (s.name || '.%') is O(classes × methods) in SQLite — too slow for
+    # large projects. Build a method-count dict in Python in one O(n) pass instead.
+    method_counts: dict[str, int] = {}
+    for (mname,) in conn.execute(
+        "SELECT name FROM symbols WHERE kind='method' AND is_test=0"
+    ).fetchall():
+        if '.' in mname:
+            method_counts[mname.rsplit('.', 1)[0]] = \
+                method_counts.get(mname.rsplit('.', 1)[0], 0) + 1
+
+    class_raw = conn.execute(
+        "SELECT name, file_path, start_line, source_text "
+        "FROM symbols WHERE kind='class' AND is_test=0"
     ).fetchall()
+    class_rows = sorted(
+        class_raw, key=lambda r: -method_counts.get(r[0], 0)
+    )[:10]
 
     lines.append("### Domain objects (classes)")
     if class_rows:
-        for name, fp, sl, src, method_count in class_rows:
+        for name, fp, sl, src in class_rows:
             doc = _extract_docstring(src)
             desc = f" — {doc}" if doc else ""
+            method_count = method_counts.get(name, 0)
             methods_str = f"{method_count} method{'s' if method_count != 1 else ''}"
             lines.append(f"- `{name}` ({methods_str}) — {fp}:{sl}{desc}")
     else:
@@ -229,8 +235,10 @@ def _section_business_logic(conn: sqlite3.Connection) -> list[str]:
 def _section_conventions(conn: sqlite3.Connection) -> list[str]:
     lines = ["## Code Conventions", ""]
 
+    # Load only name/kind/signature_text — NOT source_text.
+    # Loading source_text for all symbols would be 100+ MB on large projects.
     sym_rows = conn.execute(
-        "SELECT name, kind, signature_text, source_text FROM symbols WHERE is_test=0"
+        "SELECT name, kind, signature_text FROM symbols WHERE is_test=0"
     ).fetchall()
 
     if not sym_rows:
@@ -239,21 +247,19 @@ def _section_conventions(conn: sqlite3.Connection) -> list[str]:
 
     all_names = [row[0] for row in sym_rows]
     func_rows = [row for row in sym_rows if row[1] in ('function', 'method')]
-    class_rows = [row for row in sym_rows if row[1] == 'class']
+    class_rows_conv = [row for row in sym_rows if row[1] == 'class']
 
     # Naming convention for functions
-    func_names = [row[0] for row in func_rows]
     func_styles: dict[str, int] = {}
-    for n in func_names:
-        s = _classify_name(n)
+    for row in func_rows:
+        s = _classify_name(row[0])
         func_styles[s] = func_styles.get(s, 0) + 1
     dominant_func_style = max(func_styles, key=func_styles.get) if func_styles else 'unknown'
 
     # Naming convention for classes
-    class_names = [row[0] for row in class_rows]
     class_styles: dict[str, int] = {}
-    for n in class_names:
-        s = _classify_name(n)
+    for row in class_rows_conv:
+        s = _classify_name(row[0])
         class_styles[s] = class_styles.get(s, 0) + 1
     dominant_class_style = max(class_styles, key=class_styles.get) if class_styles else 'unknown'
 
@@ -262,7 +268,7 @@ def _section_conventions(conn: sqlite3.Connection) -> list[str]:
     lines.append(f"- Classes: **{dominant_class_style}**")
     lines.append("")
 
-    # Type hint coverage
+    # Type hint coverage — uses signature_text only (no source_text needed)
     if func_rows:
         typed = sum(1 for row in func_rows if _has_type_hints(row[2]))
         pct = int(typed / len(func_rows) * 100)
@@ -270,16 +276,20 @@ def _section_conventions(conn: sqlite3.Connection) -> list[str]:
         lines.append(f"- {typed}/{len(func_rows)} functions typed ({pct}%)")
         lines.append("")
 
-    # Docstring coverage
+    # Docstring coverage — use SQL INSTR to avoid loading all source_text into Python
     if func_rows:
-        doc_count = sum(1 for row in func_rows if _has_docstring(row[3]))
-        pct = int(doc_count / len(func_rows) * 100)
+        func_count = len(func_rows)
+        doc_count = conn.execute(
+            "SELECT COUNT(*) FROM symbols WHERE is_test=0 "
+            "AND kind IN ('function','method') "
+            "AND (INSTR(source_text, '\"\"\"') > 0 OR INSTR(source_text, \"'''\") > 0)"
+        ).fetchone()[0]
+        pct = int(doc_count / func_count * 100)
         lines.append("### Docstring coverage")
-        lines.append(f"- {doc_count}/{len(func_rows)} functions documented ({pct}%)")
+        lines.append(f"- {doc_count}/{func_count} functions documented ({pct}%)")
         lines.append("")
 
     # Common prefixes — indicates domain vocabulary
-    all_local_names = [n.split('.')[-1] for n in all_names]
     prefixes = ['get_', 'set_', 'create_', 'update_', 'delete_', 'fetch_',
                 'validate_', 'handle_', 'process_', 'build_', 'parse_', 'is_', 'has_']
     found_prefixes = [(p, _count_prefix(all_names, p)) for p in prefixes]
@@ -293,7 +303,7 @@ def _section_conventions(conn: sqlite3.Connection) -> list[str]:
         lines.append("")
 
     # Class suffixes — indicates architectural patterns
-    class_local = [n.split('.')[-1] for n in class_names]
+    class_local = [row[0].split('.')[-1] for row in class_rows_conv]
     suffixes = ['Service', 'Manager', 'Handler', 'Controller', 'Repository',
                 'Client', 'Factory', 'Builder', 'Model', 'Schema', 'Error', 'Exception']
     found_suffixes = [(s, sum(1 for n in class_local if n.endswith(s))) for s in suffixes]
