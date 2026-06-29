@@ -120,6 +120,32 @@ def _find_call_sites_lines(lines: list[str], callee_name: str, caller_start_line
     return [caller_start_line + i for i, line in enumerate(lines) if pattern.search(line)]
 
 
+def _find_csharp_call_sites_lines(
+    lines: list[str],
+    class_name: str,
+    method_name: str,
+    caller_start_line: int,
+) -> list[int]:
+    """Find ClassName.MethodName( call sites in C# source lines.
+
+    Matches both regular calls (AuthService.Login()) and generic calls
+    (AuthService.Login<T>()).  Requires the exact class name as a prefix so
+    arbitrary obj.Method() calls on local variables do NOT create edges.
+    """
+    if not class_name or not method_name:
+        return []
+    # Use a namespace-safe cache key — \x00 cannot appear in a C# identifier
+    cache_key = f"{class_name}\x00{method_name}"
+    if cache_key not in _PATTERN_CACHE:
+        _PATTERN_CACHE[cache_key] = re.compile(
+            r'(?<![.\w])' + re.escape(class_name)
+            + r'\.' + re.escape(method_name)
+            + r'\s*[<(]'
+        )
+    pattern = _PATTERN_CACHE[cache_key]
+    return [caller_start_line + i for i, line in enumerate(lines) if pattern.search(line)]
+
+
 def resolve_edges(
     symbols_by_file: dict[str, list[Symbol]],
     root: Path,
@@ -159,6 +185,37 @@ def resolve_edges(
         n_to_resolve = sum(1 for fp, _ in all_files if fp in files_to_resolve)
 
     resolved_count = 0
+
+    # ── C# cross-file candidate map ──────────────────────────────────────────
+    # Maps (class_name, method_name) → (file_path, qualified_sym_name).
+    # Built once from the full symbol graph; used inside the per-file loop.
+    # Ambiguous entries — same ClassName.MethodName in multiple files — are
+    # set to None and excluded from edge creation to keep false positives low.
+    _cs_map: dict[tuple[str, str], tuple[str, str] | None] = {}
+    for _fp, _syms in symbols_by_file.items():
+        if not _fp.endswith(('.cs', '.cshtml')):
+            continue
+        for _sym in _syms:
+            if _sym.kind not in ('method', 'function', 'constructor'):
+                continue
+            _parts = _sym.name.rsplit('.', 1)
+            if len(_parts) != 2:
+                continue
+            _cls = _parts[0].rsplit('.', 1)[-1]  # direct class name (outermost prefix stripped)
+            _key = (_cls, _parts[1])
+            if _key in _cs_map:
+                existing = _cs_map[_key]
+                if existing is not None and existing[0] != _fp:
+                    _cs_map[_key] = None  # ambiguous — drop
+            else:
+                _cs_map[_key] = (_fp, _sym.name)
+    # Flatten to a list for fast iteration in the inner loop
+    _cs_candidates: list[tuple[str, str, str, str]] = [
+        (cls, meth, fp, qual)
+        for (cls, meth), v in _cs_map.items()
+        if v is not None
+        for fp, qual in [v]
+    ]
 
     for file_path, syms in all_files:
         # Incremental mode: skip files not in the re-resolve set
@@ -209,6 +266,9 @@ def resolve_edges(
         for sym in syms:
             local = sym.name.split('.')[-1]
             same_file[local] = sym.name
+
+        is_csharp = file_path.endswith(('.cs', '.cshtml'))
+        cs_callee_files: set[str] = set()  # accumulates cross-file C# imports per file
 
         for caller_sym in syms:
             # Class source_text includes ALL method bodies — scanning it as a
@@ -268,6 +328,28 @@ def resolve_edges(
                         len(sites),
                         sites,
                     ))
+
+            # C# cross-file edges: ClassName.MethodName( pattern detection.
+            # Skips non-C# files and files with no unambiguous cross-file candidates.
+            if is_csharp and _cs_candidates:
+                for cls_name, method_name, callee_fp, callee_qual in _cs_candidates:
+                    if callee_fp == file_path:
+                        continue  # same-file already handled above
+                    # Quick double text-filter before compiling/running the regex
+                    if cls_name not in caller_text or method_name not in caller_text:
+                        continue
+                    if caller_lines is None:
+                        caller_lines = caller_text.splitlines()
+                    sites = _find_csharp_call_sites_lines(
+                        caller_lines, cls_name, method_name, caller_sym.start_line
+                    )
+                    if sites:
+                        edges.append((caller_sym.name, callee_qual, len(sites), sites))
+                        cs_callee_files.add(callee_fp)
+
+        # Flush C# file-level import relationships (deduplicated per file)
+        for callee_fp in cs_callee_files:
+            file_imports.append((file_path, callee_fp))
 
         resolved_count += 1
         if progress:

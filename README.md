@@ -59,7 +59,7 @@ pipx install git+https://github.com/ThaiDuong2002/sigil-graph.git
 
 ```bash
 sigil --version
-# sigil, version 0.4.15
+# sigil, version 0.4.17
 
 sigil --help
 ```
@@ -70,7 +70,7 @@ sigil --help
 # Git-based installs (install.sh / install.ps1)
 sigil update
 # Updating sigil at ~/.sigil ...
-# Updated: af1fedd → cdb6882 (sigil 0.4.15)
+# Updated: af1fedd → cdb6882 (sigil 0.4.17)
 
 # pipx installs
 pipx upgrade sigil-graph
@@ -371,7 +371,7 @@ Pull the latest version from GitHub. Only works for git-based installs (`install
 ```bash
 sigil update
 # Updating sigil at ~/.sigil ...
-# Updated: a1b2c3d → e4f5a6b (sigil 0.4.15)
+# Updated: a1b2c3d → e4f5a6b (sigil 0.4.17)
 ```
 
 The version number is updated in-process immediately — no shell restart needed. Run `sigil --version` to confirm.
@@ -500,7 +500,7 @@ The edge resolver uses a pattern that avoids false-positive method calls: `obj.m
 | Python | `.py` | functions, classes, methods | Cross-file + same-file |
 | TypeScript | `.ts`, `.tsx` | functions, classes, methods | Cross-file + same-file |
 | JavaScript | `.js`, `.jsx` | functions, classes, methods | Cross-file + same-file |
-| C# | `.cs` | classes, interfaces, enums, structs, records, methods, constructors, properties | Same-file |
+| C# | `.cs` | classes, interfaces, enums, structs, records, methods, constructors, properties | Cross-file (heuristic) + Same-file |
 | Razor | `.cshtml` | methods inside `@functions { }` blocks | Same-file |
 
 **C# notes:**
@@ -508,7 +508,7 @@ The edge resolver uses a pattern that avoids false-positive method calls: `obj.m
 - ASP.NET attributes (`[HttpGet]`, `[Route]`, `[Authorize]`) are stripped from signatures; the declaration line is clean
 - `bin/`, `obj/`, `packages/` are excluded from indexing automatically
 - `*Tests.cs`, `*Test.cs` files are flagged as test files
-- Cross-namespace call edges are not tracked (would require Roslyn-level analysis)
+- Cross-file call edges are tracked via a heuristic: detects `ClassName.MethodName(` patterns where the class name is unambiguous across the project. Collisions (same class name in multiple files) are skipped to avoid false positives. Full accuracy requires Roslyn integration (planned)
 
 **Razor notes:**
 - Only `@functions { ... }` blocks are indexed — these contain indexable C# methods
